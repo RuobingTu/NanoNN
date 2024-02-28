@@ -27,6 +27,80 @@ def deltaR2(eta1, phi1, eta2=None, phi2=None):
         deta = eta1 - eta2
         dphi = deltaPhi(phi1, phi2)
         return deta * deta + dphi * dphi
+'''
+def get_mini_chi2(candi_list,jets):
+    minilist = []
+    minichi2 = 1000000
+    if len(candi_list)==2:
+        if jets[candi_list[0]].hadronFlavour == jets[candi_list[1]].hadronFlavour:
+            minilist1 = candi_list[0]
+            minichi2_1 = (jets[candi_list[0]].M()-125.0)**2
+            minilist2 = candi_list[1]
+            minichi2_2 = (jets[candi_list[1]].M()-125.0)**2
+            if minichi2_2> minichi2_1:
+                return [minilist1, minichi2_1, minilist2, minichi2_2]
+            else:
+                return [minilist2, minichi2_2, minilist1, minichi2_1]
+        else:
+            minilist = candi_list
+            minichi2 = ((jets[candi_list[0]]+jets[candi_list[1]]).M()-125.0)**2
+            return [minilist,minichi2]
+    elif len(candi_list)==1:
+        minilist = candi_list
+        minichi2 = (jets[candi_list[0]].M()-125.0)**2
+        return [minilist,minichi2]
+    elif len(candi_list)==0:
+        minilist = candi_list
+        minichi2 = 1000000
+        return [minilist,minichi2]
+    else:
+        new_list = [[x,y] for x in candi_list for y in candi_list if (x!=y and jets[x].hadronFlavour != jets[y].hadronFlavour)]
+        for tmp_list in new_list:
+            tmp_chi2 = ((jets[tmp_list[0]]+jets[tmp_list[1]]).M()-125.0)**2
+            if tmp_chi2<minichi2:
+                minichi2 = tmp_chi2
+                minilist = tmp_list
+        return [minilist,minichi2]
+'''
+
+def get_mini_chi2(candi_list,jets):
+    minilist = []
+    minichi2 = 1000000
+    if len(candi_list)==2:
+        minilist = candi_list
+        minichi2 = ((jets[candi_list[0]]+jets[candi_list[1]]).M()-125.0)**2
+        return [minilist,minichi2]
+    elif len(candi_list)==1:
+        minilist = candi_list
+        minichi2 = (jets[candi_list[0]].M()-125.0)**2
+        return [minilist,minichi2]
+    elif len(candi_list)==0:
+        minilist = candi_list
+        minichi2 = 1000000
+        return [minilist,minichi2]
+    else:
+        new_list = [[x,y] for x in candi_list for y in candi_list if x!=y ]
+        for tmp_list in new_list:
+            tmp_chi2 = ((jets[tmp_list[0]]+jets[tmp_list[1]]).M()-125.0)**2
+            if tmp_chi2<minichi2:
+                minichi2 = tmp_chi2
+                minilist = tmp_list
+        return [minilist,minichi2]
+
+def fj_get_mini_chi2(candi_list,jets):
+    mini_idx = -1 
+    minichi2 = 1000000
+    if len(candi_list)==0:
+        mini_idx = -1
+        minichi2 = 1000000
+        return [mini_idx,minichi2]
+    else:
+        for tmp_list in candi_list:
+            tmp_chi2 = (jets[tmp_list].PNmass - 125)**2
+            if tmp_chi2<minichi2:
+                minichi2 = tmp_chi2
+                mini_idx = tmp_list
+        return [mini_idx,minichi2]
 
 
 def deltaR(eta1, phi1, eta2=None, phi2=None):
