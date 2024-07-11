@@ -140,29 +140,41 @@ class hhh6bProducerPNetAK4(Module):
                 version=ver, cache_suffix='mass') for ver in self._opts['mass_regression_versions']]
 
         # https://twiki.cern.ch/twiki/bin/viewauth/CMS/BtagRecommendation
-        self.DeepCSV_WP_L = {2016: 0.2217, 2017: 0.1522, 2018: 0.1241}[self.year]
-        self.DeepCSV_WP_M = {2016: 0.6321, 2017: 0.4941, 2018: 0.4184}[self.year]
-        self.DeepCSV_WP_T = {2016: 0.8953, 2017: 0.8001, 2018: 0.7527}[self.year]
-        
-        self.DeepFlavB_WP_L = {2016: 0.0480, 2017: 0.0532, 2018: 0.0490}[self.year]
-        self.DeepFlavB_WP_M = {2016: 0.2489, 2017: 0.3040, 2018: 0.2783}[self.year]
-        self.DeepFlavB_WP_T = {2016: 0.6377, 2017: 0.7476, 2018: 0.7100}[self.year]
+        self.DeepCSV_WP_L = {"2016APV": 0.2027, "2016": 0.1918, "2017": 0.1355, "2018": 0.1208}[str(self.year)]
+        self.DeepCSV_WP_M = {"2016APV": 0.6001, "2016": 0.5847, "2017": 0.4506, "2018": 0.4168}[str(self.year)]
+        self.DeepCSV_WP_T = {"2016APV": 0.8819, "2016": 0.8767, "2017": 0.7738, "2018": 0.7665}[str(self.year)]
+    
+        self.DeepFlavB_WP_L = {"2016APV": 0.0508, "2016": 0.0480, "2017": 0.0532, "2018": 0.0490}[str(self.year)]
+        self.DeepFlavB_WP_M = {"2016APV": 0.2598, "2016": 0.2489, "2017": 0.3040, "2018": 0.2783}[str(self.year)]
+        self.DeepFlavB_WP_T = {"2016APV": 0.6502, "2016": 0.6377, "2017": 0.7476, "2018": 0.7100}[str(self.year)]
         
         # jet met corrections
         # jet mass scale/resolution: https://github.com/cms-nanoAOD/nanoAOD-tools/blob/a4b3c03ca5d8f4b8fbebc145ddcd605c7553d767/python/postprocessing/modules/jme/jetmetHelperRun2.py#L45-L58
-        self._jmsValues = {2016: [1.00, 0.9906, 1.0094],
-                           2017: [1.0016, 0.978, 0.986], # tuned to our top control region
-                           2018: [0.997, 0.993, 1.001]}[self.year]
-        self._jmrValues = {2016: [1.00, 1.0, 1.09],  # tuned to our top control region
-                           2017: [1.03, 1.00, 1.07],
-                           2018: [1.065, 1.031, 1.099]}[self.year]
+        self._jmsValues = {"2016APV": [1.00, 0.9906, 1.0094],
+                           "2016"   : [1.00, 0.9906, 1.0094],
+                           "2017"   : [1.0016, 0.978, 0.986], # tuned to our top control region
+                           "2018"   : [0.997, 0.993, 1.001],
+                           "2022"   : [1.0, 1.0, 1.0],
+                           "2022EE" : [1.0, 1.0, 1.0]}[str(self.year)]
+        self._jmrValues = {"2016APV": [1.00, 1.0, 1.09],  # tuned to our top control region
+                           "2016"   : [1.00, 1.0, 1.09],  # tuned to our top control region
+                           "2017"   : [1.03, 1.00, 1.07],
+                           "2018"   : [1.065, 1.031, 1.099],
+                           "2022"   : [0.0, 0.0, 0.0],
+                           "2022EE" : [0.0, 0.0, 0.0]}[str(self.year)]
 
-        self._jmsValuesReg = {2016: [1.00, 0.998, 1.002],
-                           2017: [1.002, 0.996, 1.008],
-                           2018: [0.994, 0.993, 1.001]}[self.year]
-        self._jmrValuesReg = {2016: [1.028, 1.007, 1.063],
-                           2017: [1.026, 1.009, 1.059],
-                           2018: [1.031, 1.006, 1.075]}[self.year]
+        self._jmsValuesReg = {"2016APV": [1.00, 0.998, 1.002],
+                              "2016"   : [1.00, 0.998, 1.002],
+                              "2017"   : [1.002, 0.996, 1.008],
+                              "2018"   : [0.994, 0.993, 1.001],
+                              "2022"   : [1.0, 1.0, 1.0],
+                              "2022EE" : [1.0, 1.0, 1.0]}[str(self.year)]
+        self._jmrValuesReg = {"2016APV": [1.028, 1.007, 1.063],
+                              "2016"   : [1.028, 1.007, 1.063],
+                              "2017"   : [1.026, 1.009, 1.059],
+                              "2018"   : [1.031, 1.006, 1.075],
+                              "2022"   : [1.0, 1.0, 1.0],
+                              "2022EE" : [1.0, 1.0, 1.0]}[str(self.year)]
 
         if self._needsJMECorr:
             self.jetmetCorr = JetMETCorrector(year=self.year, jetType="AK4PFchs", **self._jmeSysts)
@@ -642,6 +654,11 @@ class hhh6bProducerPNetAK4(Module):
         self.out.branch("ntau", "I")
         self.out.branch("nleps", "I")
         self.out.branch("nbtags", "I")
+        self.out.branch("nSmallJets30", 'I')
+        self.out.branch("nFatJets_rt", 'I')
+        self.out.branch("nrawTaus_rt", 'I')
+        self.out.branch("nBTaggedJets_rt", 'I')
+        
         for idx in ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]):
             prefix = 'jet%i'%idx
             self.out.branch(prefix + "Pt", "F")
@@ -701,15 +718,16 @@ class hhh6bProducerPNetAK4(Module):
                 self.out.branch(prefix + "HiggsMatchedIndex", "I")
 
         # leptons
-        for idx in ([1, 2]):
+        for idx in ([1, 2, 3]):
             prefix = 'lep%i'%idx
             self.out.branch(prefix + "Pt", "F")
             self.out.branch(prefix + "Eta", "F")
             self.out.branch(prefix + "Phi", "F")
             self.out.branch(prefix + "Id", "I")
 
-        for idx in ([1, 2, 3, 4, 5, 6]):
+        for idx in ([1, 2, 3, 4]):
             prefix = 'tau%i'%idx
+            self.out.branch(prefix + "Charge", "I")
             self.out.branch(prefix + "Pt", "F")
             self.out.branch(prefix + "Eta", "F")
             self.out.branch(prefix + "Phi", "F")
@@ -772,10 +790,9 @@ class hhh6bProducerPNetAK4(Module):
             self.out.branch("higgs3_mass", 'F')
             self.out.branch("bh1_t3_massSD",'F')
             self.out.branch("bh2_t3_massSD",'F')
-            self.out.fillBranch("nSmallJets30", 'I')
-            self.out.fillBranch("nFatJets_rt", 'I')
-            self.out.fillBranch("nrawTaus_rt", 'I')
-            self.out.fillBranch("nBTaggedJets_rt", 'I')
+            self.out.branch("higgs3_pt", "F")
+            self.out.branch("higgs3_eta", "F")
+            self.out.branch("higgs3_phi", "F")
 
     def endFile(self, inputFile, outputFile, inputTree, wrappedOutputTree):
         if self._opts['run_mass_regression'] and self._opts['WRITE_CACHE_FILE']:
@@ -879,10 +896,66 @@ class hhh6bProducerPNetAK4(Module):
         # do lepton selection
         event.vbfLeptons = [] # usef for vbf removal
         event.looseLeptons = []  # used for lepton counting
+        event.looseLeptons = []
         event.cleaningElectrons = []
         event.cleaningMuons = []
         event.looseTaus = [] # store taus
+        event.cutTaus = []
+        # do lepton selection
         
+        electrons = Collection(event, "Electron")
+        for el in electrons:
+            el.Id = el.charge * (-11)
+            el.kind = self.kTauToElecDecay
+            el.mass = 0.000511
+            #if el.pt > 35 and abs(el.eta) <= 2.5 and el.miniPFRelIso_all <= 0.2 and el.cutBased:
+            if el.pt > 7 and abs(el.eta) < 2.5 and abs(el.dxy) < 0.05 and abs(el.dz) < 0.2:
+                event.vbfLeptons.append(el)
+            if self.Run==2:
+                if el.pt > 10 and abs(el.eta) <= 2.5 and abs(el.dxy) < 0.045 and abs(el.dz) < 0.2 and el.miniPFRelIso_all <= 0.2 and el.lostHits <= 1 and el.convVeto and el.mvaFall17V2noIso_WP90: #and el.cutBased>3: # cutBased ID: (0:fail, 1:veto, 2:loose, 3:medium, 4:tight)
+                    event.looseLeptons.append(el)
+            else:
+                if el.pt > 10 and abs(el.eta) <= 2.5 and abs(el.dxy) < 0.045 and abs(el.dz) < 0.2 and el.miniPFRelIso_all <= 0.2 and el.lostHits <= 1 and el.convVeto and el.mvaNoIso_WP90: #and el.cutBased>3: # cutBased ID: (0:fail, 1:veto, 2:loose, 3:medium, 4:tight)
+                    event.looseLeptons.append(el)
+            if self.Run==2:
+                if el.pt > 30 and el.mvaFall17V2noIso_WP90:
+                    event.cleaningElectrons.append(el)
+            else:
+                if el.pt > 30 and el.mvaNoIso_WP90:
+                    event.cleaningElectrons.append(el)
+
+        muons = Collection(event, "Muon")
+        for mu in muons:
+            mu.Id = mu.charge * (-13)
+            mu.kind = self.kTauToMuDecay
+            mu.mass = 0.10566
+            if mu.pt > 5 and abs(mu.eta) < 2.4 and abs(mu.dxy) < 0.05 and abs(mu.dz) < 0.2:
+                event.vbfLeptons.append(mu)
+            if mu.pt > 10 and abs(mu.eta) <= 2.4 and abs(mu.dxy) < 0.045 and abs(mu.dz) < 0.2 and mu.mediumId and mu.miniPFRelIso_all <= 0.2: # mu.tightId
+                event.looseLeptons.append(mu)
+            if mu.pt > 30 and mu.looseId:
+                event.cleaningMuons.append(mu)
+        
+
+        taus = Collection(event, "Tau")
+        for tau in taus:
+            tau.Id = tau.charge * (-15)
+            tau.kind = self.kTauToHadDecay
+            if tau.decayMode==0: tau.mass = 0.13957
+            if self.Run==2:
+                if tau.pt > 20 and abs(tau.eta) <= 2.3 and abs(tau.dz) < 0.2 and (tau.decayMode in [0,1,2,10,11]) and tau.idDeepTau2017v2p1VSe >= 2 and tau.idDeepTau2017v2p1VSmu >= 1 and tau.idDeepTau2017v2p1VSjet >= 2:
+                    event.looseTaus.append(tau) # All loosest WPs. To use later: VVloose VsE (2), VLoose vsMu (1), Loose Vsjet (8)
+        
+        cutTaus = Collection(event, "Tau")
+        for tau in cutTaus:
+            tau.Id = tau.charge * (-15)
+            tau.kind = self.kTauToHadDecay
+            if tau.decayMode==0: tau.mass = 0.13957
+            if self.Run==2:
+                if tau.pt > 20 and abs(tau.eta) <= 2.3 and abs(tau.dz) < 0.2:
+                    event.cutTaus.append(tau) # All loosest WPs. To use later: VVloose VsE (2), VLoose vsMu (1), Loose Vsjet (8)
+
+        '''
         electrons = Collection(event, "Electron")
         for el in electrons:
             el.Id = el.charge * (11)
@@ -908,8 +981,9 @@ class hhh6bProducerPNetAK4(Module):
         for tau in taus:
             tau.Id = tau.charge * (15)
             tau.kind = self.kTauToHadDecay
-            if tau.pt > 20 and abs(tau.eta) <= 2.3 and abs(tau.dz) < 0.2 and tau.idDeepTau2017v2p1VSe >= 2 and tau.idDeepTau2017v2p1VSmu >= 2 and tau.idDeepTau2017v2p1VSjet >= 8:
+            if tau.pt > 20 and abs(tau.eta) <= 2.3 and abs(tau.dz) < 0.2 and tau.idDeepTau2017v2p1VSe >= 2 and tau.idDeepTau2017v2p1VSmu >= 2 and tau.idDeepTau2017v2p1VSjet >= 2:
                 event.looseTaus.append(tau) # VVloose VsE VVLoose vsMu Medium Vsjet
+        '''
 
         event.looseLeptons.sort(key=lambda x: x.pt, reverse=True)
         event.vbfLeptons.sort(key=lambda x: x.pt, reverse=True)
@@ -918,6 +992,7 @@ class hhh6bProducerPNetAK4(Module):
         self.nTaus = int(len(event.looseTaus))
         self.nLeps = int(len(event.looseLeptons))
         self.nrawTaus = event.nTau
+        #self.nrawTaus = int(len(event.cutTaus))
 
     def GetGenMatch_ofTau(self, event, looseTau):
         if not self.isMC:
@@ -1006,16 +1081,23 @@ class hhh6bProducerPNetAK4(Module):
             FMTT.run(bothtaus, MET_x, MET_y, covMET)
             FMTToutput = FMTT.getBestP4()
             FastMTTmass = FMTToutput.M()
+            tau_pair = t1 + t2
             self.out.fillBranch("higgs3_mass", FastMTTmass)
+            self.out.fillBranch("higgs3_pt", tau_pair.Pt())
+            self.out.fillBranch("higgs3_eta", tau_pair.Eta())
+            self.out.fillBranch("higgs3_phi", tau_pair.Phi())
         else:
             self.out.fillBranch("higgs3_mass", 0)
+            self.out.fillBranch("higgs3_pt", 0)
+            self.out.fillBranch("higgs3_eta", 0)
+            self.out.fillBranch("higgs3_phi", 0)
         return truth_trco_tau
 
     def correctJetsAndMET(self, event):
         # correct Jets and MET
-        event.idx = event._entry if event._tree._entrylist is None else event._tree._entrylist.GetEntry(event._entry)
+        # event.idx = event._entry if event._tree._entrylist is None else event._tree._entrylist.GetEntry(event._entry)
         event._allJets = Collection(event, "Jet")
-        #event.met = METObject(event, "METFixEE2017") if self.year == 2017 else METObject(event, "MET")
+        event.met = METObject(event, "METFixEE2017") if self.year == 2017 else METObject(event, "MET")
         event.met = METObject(event, "MET")
         event._allFatJets = Collection(event, self._fj_name)
         event.subjets = Collection(event, self._sj_name)  # do not sort subjets after updating!!
@@ -2116,10 +2198,11 @@ class hhh6bProducerPNetAK4(Module):
             fillBranch(prefix + "Phi", lep.phi)
             fillBranch(prefix + "Id", lep.Id)
     def fillTauInfo(self, event, leptons):
-        for idx in ([1, 2, 3, 4, 5, 6]):
+        for idx in ([1, 2, 3, 4]):
             lep = leptons[idx-1]if len(leptons)>idx-1 else _NullObject()
             prefix = 'tau%i'%(idx)
             fillBranch = self._get_filler(lep)
+            fillBranch(prefix + "Charge", lep.charge)
             fillBranch(prefix + "Pt", lep.pt)
             fillBranch(prefix + "Eta", lep.eta)
             fillBranch(prefix + "Phi", lep.phi)
@@ -2427,6 +2510,7 @@ class hhh6bProducerPNetAK4(Module):
     def analyze(self, event):
         """process event, return True (go to next module) or False (fail, go to next event)"""
         
+        self.Run=2
         # fill histograms
         event.gweight = 1
         if self.isMC:
@@ -2441,6 +2525,7 @@ class hhh6bProducerPNetAK4(Module):
         probe_jets = [fj for fj in event.fatjets if fj.Xbb>0.5]
         #probe_jets.sort(key=lambda x: x.pt, reverse=True)
         probe_jets.sort(key=lambda x: x.Xbb, reverse=True)
+        nprobejets = len([fj for fj in probe_jets if fj.pt > 250 and fj.Xbb / (fj.Xbb + fj.particleNetMD_QCD) > 0.9105])
 
 
         if self._opts['option'] == "10":
@@ -2457,7 +2542,6 @@ class hhh6bProducerPNetAK4(Module):
 
         # evaluate regression
         self.evalMassRegression(event, probe_jets)
-
         # apply selection
         passSel = False
         if self._opts['option'] == "5":
@@ -2484,14 +2568,16 @@ class hhh6bProducerPNetAK4(Module):
             if (self.nSmallJets > -1): passSel = True
         elif self._opts['option'] == "92":
             #if (self.nSmallJets > 5 and self.nBTaggedJets > 2): passSel = True
-            '''
-            if (self.nSmallJets >= 2 and self.nFatJets >= 1 and self.nrawTaus>0): passSel = True
-            elif (self.nSmallJets >= 4 and self.nrawTaus>0 and self.nBTaggedJets > 2): passSel = True
-            '''
-            if (self.nSmallJets > -1): passSel = True
+            #if event.HLT_PFHT300PT30_QuadPFJet_75_60_45_40_TriplePFBTagCSV_3p0!=0 and self.nTaus>=1:
+            #if self.nTaus>=0 and (event.HLT_PFJet450!=0 or event.HLT_PFJet500!=0 or event.HLT_PFHT1050!=0 or event.HLT_AK8PFJet550!=0 or event.HLT_AK8PFJet360_TrimMass30!=0 or event.HLT_AK8PFJet400_TrimMass30!=0 or event.HLT_AK8PFHT750_TrimMass50!=0 or event.HLT_AK8PFJet330_PFAK8BTagCSV_p17!=0 or event.HLT_PFHT300PT30_QuadPFJet_75_60_45_40_TriplePFBTagCSV_3p0!=0 or event.HLT_PFMET100_PFMHT100_IDTight_CaloBTagCSV_3p1!=0 or event.HLT_PFHT380_SixPFJet32_DoublePFBTagCSV_2p2!=0 or event.HLT_PFHT380_SixPFJet32_DoublePFBTagDeepCSV_2p2!=0 or event.HLT_PFHT430_SixPFJet40_PFBTagCSV_1p5!=0 or event.HLT_QuadPFJet98_83_71_15_DoubleBTagCSV_p013_p08_VBF1!=0 or event.HLT_QuadPFJet98_83_71_15_BTagCSV_p013_VBF2!=0):
+            if event.HLT_PFHT300PT30_QuadPFJet_75_60_45_40_TriplePFBTagCSV_3p0!=0:
+                if (self.nSmallJets >= 2 and nprobejets >= 1 and self.nrawTaus>=1): passSel = True
+                elif (self.nSmallJets >= 4 and self.nrawTaus>=1 and self.nBTaggedJets > 2): passSel = True
+
+
 
         self.out.fillBranch("nSmallJets30", self.nSmallJets)
-        self.out.fillBranch("nFatJets_rt", self.nFatJets)
+        self.out.fillBranch("nFatJets_rt", nprobejets)
         self.out.fillBranch("nrawTaus_rt", self.nrawTaus)
         self.out.fillBranch("nBTaggedJets_rt", self.nBTaggedJets)
 
@@ -2571,8 +2657,10 @@ class hhh6bProducerPNetAK4(Module):
         self.fillVBFJetInfoJME(event, event.vbfak4jets)
         self.fillLeptonInfo(event, event.looseLeptons)
         self.fillTauInfo(event, event.looseTaus)
-        self.higgsPairingAlgorithm(event, event.ak4jets, probe_jets)
-        self.GetGenMatch_ofTau(event, event.looseTaus)
+        if self.isMC:
+            self.higgsPairingAlgorithm(event, event.ak4jets, probe_jets)
+            self.GetGenMatch_ofTau(event, event.looseTaus)
+        #self.fillTriggerFilters(event)
         # for all jme systs
         if self._allJME and self.isMC:
             self.fillFatJetInfoJME(event, probe_jets)
