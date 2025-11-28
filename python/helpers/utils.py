@@ -193,3 +193,15 @@ def configLogger(name, loglevel=logging.INFO, filename=None):
         logfile.setLevel(loglevel)
         logfile.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s'))
         logger.addHandler(logfile)
+
+def get_bjet_sf(pt, eta):
+    """
+    This function returns the b-jet scale factor.
+    A real implementation would read these values from a data file.
+    """
+    if pt > 670:
+        pt = 670
+    if abs(eta) > 2.4:
+        return 1.0
+
+    return 0.938887 + 0.00017124 * pt - 1.55395e-07 * pt * pt
