@@ -106,6 +106,20 @@ def fj_get_mini_chi2(candi_list,jets):
 def deltaR(eta1, phi1, eta2=None, phi2=None):
     return math.sqrt(deltaR2(eta1, phi1, eta2, phi2))
 
+#find all subList for a genparticle 
+#for example, if we would like to find subList for 1 particle and idx is gp1_idx
+#thus gp1Sublist = getgplist(0, genparts,[gp1_idx]), where genparts is genparts = Collection(event, "GenPart")
+# more over, to find subList for many genparticles which idx save in gp_list
+# for idx,gps in enumerate(gp_list):
+#   gpSublist = getgplist(idx, genparts,gp_list)
+def getgplist(list_index, genparts, genParticleSublist):
+    gp = genparts[genParticleSublist[list_index][-1]]
+    for idx in gp.dauIdx:
+        dau = genparts[idx]
+        if dau.pdgId == gp.pdgId:
+            genParticleSublist[list_index].append(idx)
+            return getgplist(list_index, genparts, genParticleSublist)
+    return genParticleSublist
 
 def closest(obj, collection, presel=lambda x, y: True):
     ret = None

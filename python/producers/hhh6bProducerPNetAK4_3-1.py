@@ -479,7 +479,6 @@ class hhh6bProducerPNetAK4(Module):
             
         # more small jets
         self.out.branch("nsmalljets", "I")
-        self.out.branch("kind_category", "I")
         self.out.branch("ntaus", "I")
         self.out.branch("nleps", "I")
         self.out.branch("nbtags", "I")
@@ -510,15 +509,6 @@ class hhh6bProducerPNetAK4(Module):
                 self.out.branch(prefix + "HiggsMatchedIndex", "I")
                 self.out.branch(prefix + "FatJetMatched", "O")
                 self.out.branch(prefix + "FatJetMatchedIndex", "I")
-
-        for idx_a in ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]):
-            for idx_b in range(idx_a, 11):
-                prefix = 'jet%ijet%i'%(idx_a, idx_b)
-                self.out.branch("pt" + prefix , "F")
-                self.out.branch("eta" + prefix , "F")
-                self.out.branch("phi" + prefix , "F")
-                self.out.branch("mass" + prefix, "F")
-                self.out.branch("dr" + prefix, "F")
 
         # leptons
         for idx in ([1, 2]):
@@ -723,7 +713,6 @@ class hhh6bProducerPNetAK4(Module):
             else:
                 if tau.pt > 20 and abs(tau.eta) <= 2.5 and abs(tau.dz) < 0.2 and (tau.decayMode in [0,1,2,10,11]) and tau.idDeepTau2018v2p5VSe >= 2 and tau.idDeepTau2018v2p5VSmu >= 1 and tau.idDeepTau2018v2p5VSjet >= 4:
                     event.looseTaus.append(tau) # VVloose VsE, VLoose vsMu, Loose Vsjet
-        self.nrawTaus = event.nTau
 
         event.looseLeptons.sort(key=lambda x: x.pt, reverse=True)
         if self.Run==2:
@@ -1381,31 +1370,6 @@ class hhh6bProducerPNetAK4(Module):
 
             fillBranch(prefix + "HasMuon", hasMuon)
             fillBranch(prefix + "HasElectron", hasElectron)
-        
-        jets_4vec = [polarP4(j) for j in jets]
-        njets_fillJetInfo_tmp = len(jets)
-        for idx_a in ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]):
-            for idx_b in range(idx_a, 11):
-                if idx_a > njets_fillJetInfo_tmp or idx_b > njets_fillJetInfo_tmp:
-                    jets_pair = _NullObject()
-                else:
-                    jets_pair = jets_4vec[idx_a-1] + jets_4vec[idx_b-1]
-                prefix = 'jet%ijet%i'%(idx_a, idx_b)
-                if jets_pair:
-                    fillBranch = self._get_filler(jets_pair)
-                    fillBranch("pt" + prefix , jets_pair.pt())
-                    fillBranch("eta" + prefix , jets_pair.eta())
-                    fillBranch("phi" + prefix , jets_pair.phi())
-                    fillBranch("mass" + prefix, jets_pair.mass())
-                    deltaR_tmpvar = deltaR(jets_4vec[idx_a-1].eta(), jets_4vec[idx_a-1].phi(), jets_4vec[idx_b-1].eta(), jets_4vec[idx_b-1].phi())
-                    fillBranch("dr" + prefix, deltaR_tmpvar)
-                else:
-                    fillBranch = self._get_filler(jets_pair)
-                    fillBranch("pt" + prefix , 0)
-                    fillBranch("eta" + prefix , 0)
-                    fillBranch("phi" + prefix , 0)
-                    fillBranch("mass" + prefix, 0)
-                    fillBranch("dr" + prefix, 0)
 
         if self.isMC:
             hadGenH_4vec = [polarP4(h) for h in self.hadGenHs]
@@ -2472,7 +2436,6 @@ class hhh6bProducerPNetAK4(Module):
         
         #probe_jets.sort(key=lambda x: x.pt, reverse=True)
         probe_jets.sort(key=lambda x: x.Xbb, reverse=True)
-        nprobejets = len([fj for fj in probe_jets if fj.pt > 250 and fj.Xbb / (fj.Xbb + fj.particleNetMD_QCD) > 0.9105])
 
 
 
@@ -2516,31 +2479,8 @@ class hhh6bProducerPNetAK4(Module):
         elif self._opts['option'] == "4":
             #if (self.nSmallJets > 5 and self.nBTaggedJets > 2): passSel = True
             if (self.nSmallJets > -1): passSel = True
-        elif self._opts['option'] == "92":
-            #if (self.nSmallJets > 5 and self.nBTaggedJets > 2): passSel = True
-            #if event.HLT_PFHT300PT30_QuadPFJet_75_60_45_40_TriplePFBTagCSV_3p0!=0 and self.nTaus>=1:
-            #if self.nTaus>=0 and (event.HLT_PFJet450!=0 or event.HLT_PFJet500!=0 or event.HLT_PFHT1050!=0 or event.HLT_AK8PFJet550!=0 or event.HLT_AK8PFJet360_TrimMass30!=0 or event.HLT_AK8PFJet400_TrimMass30!=0 or event.HLT_AK8PFHT750_TrimMass50!=0 or event.HLT_AK8PFJet330_PFAK8BTagCSV_p17!=0 or event.HLT_PFHT300PT30_QuadPFJet_75_60_45_40_TriplePFBTagCSV_3p0!=0 or event.HLT_PFMET100_PFMHT100_IDTight_CaloBTagCSV_3p1!=0 or event.HLT_PFHT380_SixPFJet32_DoublePFBTagCSV_2p2!=0 or event.HLT_PFHT380_SixPFJet32_DoublePFBTagDeepCSV_2p2!=0 or event.HLT_PFHT430_SixPFJet40_PFBTagCSV_1p5!=0 or event.HLT_QuadPFJet98_83_71_15_DoubleBTagCSV_p013_p08_VBF1!=0 or event.HLT_QuadPFJet98_83_71_15_BTagCSV_p013_VBF2!=0):
-            #if event.HLT_PFHT300PT30_QuadPFJet_75_60_45_40_TriplePFBTagCSV_3p0!=0:
-            #    if (self.nSmallJets >= 2 and nprobejets >= 1 and self.nrawTaus>=1): passSel = True
-            #    elif (self.nSmallJets >= 4 and self.nrawTaus>=1 and self.nBTaggedJets > 2): passSel = True
-            if event.HLT_PFHT300PT30_QuadPFJet_75_60_45_40_TriplePFBTagCSV_3p0!=0:
-                if (self.nSmallJets >= 2 and nprobejets >= 1): passSel = True
-                elif (self.nSmallJets >= 4 and self.nrawTaus>=1): passSel = True
 
         if not passSel: return False
-    
-        if self.nTaus ==2:
-            self.kind_category = 0
-        elif self.nTaus ==1 and self.nLeps==1:
-            self.kind_category = 1
-        elif self.nTaus ==1:
-            self.kind_category = 2
-        elif self.nTaus >=2:
-            self.kind_category = 3
-        elif self.nLeps>=2:
-            self.kind_category = 4
-        else:
-            self.kind_category = 5
 
         # load gen history
         hadGenHs = self.loadGenHistory(event, probe_jets)
@@ -2605,10 +2545,7 @@ class hhh6bProducerPNetAK4(Module):
                  #"2022EE" : 0.91255}[self.year]
         XtautauWP = 0.9
         self.out.fillBranch("nprobejets", len([fj for fj in probe_jets if fj.pt > 200 and fj.Xbb > XbbWP]))
-        if self.Run!=2:
-            self.out.fillBranch("nprobetaus", len([fj for fj in probe_jets if fj.pt > 200 and fj.Xtautau > XtautauWP]))
-        else:
-            self.out.fillBranch("nprobetaus", -1)
+        self.out.fillBranch("nprobetaus", len([fj for fj in probe_jets if fj.pt > 200 and fj.Xtautau > XtautauWP]))
         #print(len(probe_jets))
         #if len(probe_jets) > 0:
         self.fillFatJetInfo(event, probe_jets)
