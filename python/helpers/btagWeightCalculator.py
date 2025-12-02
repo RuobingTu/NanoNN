@@ -32,10 +32,24 @@ class BTagWeightCalculator:
             self.json_key_comb = "robustParticleTransformer_comb"
             self.json_key_light = "robustParticleTransformer_light"
         else:
-            # Run2 (DeepJet) WPs - Example placeholder values
-            # 2018 DeepJet: M=0.2770, T=0.7264
-            self.wp_medium = 0.2770
-            self.wp_tight = 0.7264
+            # Run2 (DeepJet) WPs - UL
+            if "2016preVFP" in self.era:
+                self.wp_medium = 0.2598
+                self.wp_tight = 0.6502
+            elif "2016postVFP" in self.era:
+                self.wp_medium = 0.2489
+                self.wp_tight = 0.6377
+            elif "2017" in self.era:
+                self.wp_medium = 0.3040
+                self.wp_tight = 0.7476
+            elif "2018" in self.era:
+                self.wp_medium = 0.2783
+                self.wp_tight = 0.7100
+            else:
+                # Default to 2018 if unknown
+                self.wp_medium = 0.2783
+                self.wp_tight = 0.7100
+
             self.json_key_comb = "deepJet_comb"
             self.json_key_light = "deepJet_incl"
 

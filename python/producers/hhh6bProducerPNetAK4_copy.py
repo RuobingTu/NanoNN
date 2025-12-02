@@ -18,6 +18,7 @@ from PhysicsTools.NanoNN.helpers.triggerHelper import passTrigger
 from PhysicsTools.NanoNN.helpers.utils import closest, sumP4, polarP4, configLogger, get_subjets, deltaPhi, deltaR, get_mini_chi2, fj_get_mini_chi2, getgplist
 from PhysicsTools.NanoNN.helpers.nnHelper import convert_prob, ensemble
 from PhysicsTools.NanoNN.helpers.massFitter import fitMass
+from PhysicsTools.NanoNN.helpers.btagWeightCalculator import BTagWeightCalculator
 
 import logging
 logger = logging.getLogger('nano')
@@ -110,7 +111,8 @@ class hhh6bProducerPNetAK4(Module):
         self._jmeSysts = {'jec': False, 'jes': None, 'jes_source': '', 'jes_uncertainty_file_prefix': '',
                           'jer': None, 'met_unclustered': None, 'smearMET': False, 'applyHEMUnc': False}
         self._opts = {'run_mass_regression': False, 'mass_regression_versions': ['ak8V01a', 'ak8V01b', 'ak8V01c'],
-                      'WRITE_CACHE_FILE': False, 'option': "1", 'allJME': False}
+                      'WRITE_CACHE_FILE': False, 'option': "1", 'allJME': False,
+                      'btag_json_file': None, 'btag_eff_file_path': None}
         for k in kwargs:
             if k in self._jmeSysts:
                 self._jmeSysts[k] = kwargs[k]
@@ -140,41 +142,90 @@ class hhh6bProducerPNetAK4(Module):
                 version=ver, cache_suffix='mass') for ver in self._opts['mass_regression_versions']]
 
         # https://twiki.cern.ch/twiki/bin/viewauth/CMS/BtagRecommendation
-        self.DeepCSV_WP_L = {"2016APV": 0.2027, "2016": 0.1918, "2017": 0.1355, "2018": 0.1208}[str(self.year)]
-        self.DeepCSV_WP_M = {"2016APV": 0.6001, "2016": 0.5847, "2017": 0.4506, "2018": 0.4168}[str(self.year)]
-        self.DeepCSV_WP_T = {"2016APV": 0.8819, "2016": 0.8767, "2017": 0.7738, "2018": 0.7665}[str(self.year)]
+        self.DeepCSV_WP_L = {"2016preVFP": 0.2027, "2016postVFP": 0.1918, "2017": 0.1355, "2018": 0.1208, "2022": 0.1241, "2022EE": 0.1241, "2023": 0.1241, "2023BPix": 0.1241}[str(self.year)]
+        self.DeepCSV_WP_M = {"2016preVFP": 0.6001, "2016postVFP": 0.5847, "2017": 0.4506, "2018": 0.4168, "2022": 0.4184, "2022EE": 0.4184, "2023": 0.4184, "2023BPix": 0.4184}[str(self.year)]
+        self.DeepCSV_WP_T = {"2016preVFP": 0.8819, "2016postVFP": 0.8767, "2017": 0.7738, "2018": 0.7665, "2022": 0.7527, "2022EE": 0.7527, "2023": 0.7527, "2023BPix": 0.7527}[str(self.year)]
     
-        self.DeepFlavB_WP_L = {"2016APV": 0.0508, "2016": 0.0480, "2017": 0.0532, "2018": 0.0490}[str(self.year)]
-        self.DeepFlavB_WP_M = {"2016APV": 0.2598, "2016": 0.2489, "2017": 0.3040, "2018": 0.2783}[str(self.year)]
-        self.DeepFlavB_WP_T = {"2016APV": 0.6502, "2016": 0.6377, "2017": 0.7476, "2018": 0.7100}[str(self.year)]
+        self.DeepFlavB_WP_L = {"2016preVFP": 0.0508, "2016postVFP": 0.0480, "2017": 0.0532, "2018": 0.0490, "2022": 0.0583, "2022EE": 0.0583, "2023": 0.0583, "2023BPix": 0.0583}[str(self.year)]
+        self.DeepFlavB_WP_M = {"2016preVFP": 0.2598, "2016postVFP": 0.2489, "2017": 0.3040, "2018": 0.2783, "2022": 0.3086, "2022EE": 0.3086, "2023": 0.3086, "2023BPix": 0.3086}[str(self.year)]
+        self.DeepFlavB_WP_T = {"2016preVFP": 0.6502, "2016postVFP": 0.6377, "2017": 0.7476, "2018": 0.7100, "2022": 0.7183, "2022EE": 0.7183, "2023": 0.7183, "2023BPix": 0.7183}[str(self.year)]
         
+        self.btag_calculator = None
+        # Determine is_run3 from year string
+        self.is_run3 = False
+        year_str = str(self.year)
+        if "2022" in year_str or "2023" in year_str:
+            self.is_run3 = True
+
+        btag_json_path = self._opts.get('btag_json_file')
+        if not btag_json_path:
+            # Auto-construct path based on year
+            base_path = os.path.expandvars('$CMSSW_BASE/src/PhysicsTools/NanoNN/data/POG/BTV')
+
+            # Map year to folder name
+            folder = year_str
+            if "UL" not in year_str and year_str in ["2016preVFP", "2016postVFP", "2017", "2018"]:
+                folder = year_str + "_UL"
+            elif year_str == "2022":
+                folder = "2022_Summer22"
+            elif year_str == "2022EE":
+                folder = "2022_Summer22EE"
+            elif year_str == "2023":
+                folder = "2023_Summer23"
+            elif year_str == "2023BPix":
+                folder = "2023_Summer23BPix"
+
+            btag_json_path = os.path.join(base_path, folder, "btagging.json.gz")
+
+        btag_eff_path = self._opts.get('btag_eff_file_path')
+
+        if btag_json_path and btag_eff_path:
+             try:
+                 self.btag_calculator = BTagWeightCalculator(
+                     btag_json_path,
+                     btag_eff_path,
+                     year_str,
+                     is_run3=self.is_run3
+                 )
+                 logger.info("Initialized BTagWeightCalculator with JSON: %s", btag_json_path)
+             except Exception as e:
+                 logger.warning(f"Failed to initialize BTagWeightCalculator: {e}")
+
         # jet met corrections
         # jet mass scale/resolution: https://github.com/cms-nanoAOD/nanoAOD-tools/blob/a4b3c03ca5d8f4b8fbebc145ddcd605c7553d767/python/postprocessing/modules/jme/jetmetHelperRun2.py#L45-L58
-        self._jmsValues = {"2016APV": [1.00, 0.9906, 1.0094],
-                           "2016"   : [1.00, 0.9906, 1.0094],
+        self._jmsValues = {"2016preVFP": [1.00, 0.9906, 1.0094],
+                           "2016postVFP": [1.00, 0.9906, 1.0094],
                            "2017"   : [1.0016, 0.978, 0.986], # tuned to our top control region
                            "2018"   : [0.997, 0.993, 1.001],
                            "2022"   : [1.0, 1.0, 1.0],
-                           "2022EE" : [1.0, 1.0, 1.0]}[str(self.year)]
-        self._jmrValues = {"2016APV": [1.00, 1.0, 1.09],  # tuned to our top control region
-                           "2016"   : [1.00, 1.0, 1.09],  # tuned to our top control region
+                           "2022EE" : [1.0, 1.0, 1.0],
+                           "2023"   : [1.0, 1.0, 1.0],
+                           "2023BPix": [1.0, 1.0, 1.0]}[str(self.year)]
+        self._jmrValues = {"2016preVFP": [1.00, 1.0, 1.09],  # tuned to our top control region
+                           "2016postVFP": [1.00, 1.0, 1.09],  # tuned to our top control region
                            "2017"   : [1.03, 1.00, 1.07],
                            "2018"   : [1.065, 1.031, 1.099],
                            "2022"   : [0.0, 0.0, 0.0],
-                           "2022EE" : [0.0, 0.0, 0.0]}[str(self.year)]
+                           "2022EE" : [0.0, 0.0, 0.0],
+                           "2023"   : [0.0, 0.0, 0.0],
+                           "2023BPix": [0.0, 0.0, 0.0]}[str(self.year)]
 
-        self._jmsValuesReg = {"2016APV": [1.00, 0.998, 1.002],
-                              "2016"   : [1.00, 0.998, 1.002],
+        self._jmsValuesReg = {"2016preVFP": [1.00, 0.998, 1.002],
+                              "2016postVFP": [1.00, 0.998, 1.002],
                               "2017"   : [1.002, 0.996, 1.008],
                               "2018"   : [0.994, 0.993, 1.001],
                               "2022"   : [1.0, 1.0, 1.0],
-                              "2022EE" : [1.0, 1.0, 1.0]}[str(self.year)]
-        self._jmrValuesReg = {"2016APV": [1.028, 1.007, 1.063],
-                              "2016"   : [1.028, 1.007, 1.063],
+                              "2022EE" : [1.0, 1.0, 1.0],
+                              "2023"   : [1.0, 1.0, 1.0],
+                              "2023BPix": [1.0, 1.0, 1.0]}[str(self.year)]
+        self._jmrValuesReg = {"2016preVFP": [1.028, 1.007, 1.063],
+                              "2016postVFP": [1.028, 1.007, 1.063],
                               "2017"   : [1.026, 1.009, 1.059],
                               "2018"   : [1.031, 1.006, 1.075],
                               "2022"   : [1.0, 1.0, 1.0],
-                              "2022EE" : [1.0, 1.0, 1.0]}[str(self.year)]
+                              "2022EE" : [1.0, 1.0, 1.0],
+                              "2023"   : [1.0, 1.0, 1.0],
+                              "2023BPix": [1.0, 1.0, 1.0]}[str(self.year)]
 
         if self._needsJMECorr:
             self.jetmetCorr = JetMETCorrector(year=self.year, jetType="AK4PFchs", **self._jmeSysts)
@@ -344,6 +395,12 @@ class hhh6bProducerPNetAK4(Module):
         self.out.branch("triggerEff3DWeight", "F")
         self.out.branch("triggerEffMCWeight", "F")
         self.out.branch("triggerEffMC3DWeight", "F")
+
+        if self.isMC:
+             self.out.branch("btagWeight_shape", "F")
+             self.out.branch("btagWeight_L", "F")
+             self.out.branch("btagWeight_M", "F")
+             self.out.branch("btagWeight_T", "F")
 
         # fatjets
         self.out.branch("nfatjets","I")
@@ -2862,6 +2919,26 @@ class hhh6bProducerPNetAK4(Module):
         self.fillTauInfo(event, event.looseTaus)
         #self.reconstructHiggsOnly2Lepton(event, self.kind_category, event.looseTaus, event.looseLeptons)
         self.fillLepPairInfo(event, event.looseLeptons, event.kind_category,  event.looseTaus)
+
+        if self.isMC and self.btag_calculator:
+            jets_pt = [j.pt for j in event.ak4jets]
+            jets_eta = [j.eta for j in event.ak4jets]
+            jets_flavour = [j.hadronFlavour for j in event.ak4jets]
+
+            # Use discriminator matching the era (DeepJet for Run2, PNet for Run3)
+            if self.is_run3:
+                jets_btag = [j.btagPNetB for j in event.ak4jets]
+            else:
+                jets_btag = [j.btagDeepFlavB for j in event.ak4jets]
+
+            w_shape = self.btag_calculator.calc_shape_weight(jets_pt, jets_eta, jets_flavour, jets_btag)
+            w_M = self.btag_calculator.calc_wp_weight(jets_pt, jets_eta, jets_flavour, jets_btag, wp="M")
+
+            self.out.fillBranch("btagWeight_shape", w_shape)
+            self.out.fillBranch("btagWeight_M", w_M)
+        elif self.isMC:
+             self.out.fillBranch("btagWeight_shape", 1.0)
+             self.out.fillBranch("btagWeight_M", 1.0)
 
         #self.fillTriggerFilters(event)
         # for all jme systs
