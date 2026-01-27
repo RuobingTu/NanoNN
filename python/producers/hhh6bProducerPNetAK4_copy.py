@@ -185,7 +185,9 @@ class hhh6bProducerPNetAK4(Module):
                      btag_json_path,
                      btag_eff_path,
                      year_str,
-                     is_run3=self.is_run3
+                     is_run3=self.is_run3,
+                     wp_medium=self.DeepFlavB_WP_M,
+                     wp_tight=self.DeepFlavB_WP_T
                  )
                  logger.info("Initialized BTagWeightCalculator with JSON: %s", btag_json_path)
              except Exception as e:
