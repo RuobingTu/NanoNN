@@ -4,7 +4,7 @@ import uproot
 import os
 
 class BTagWeightCalculator:
-    def __init__(self, json_file, eff_file_path, era, is_run3=False):
+    def __init__(self, json_file, eff_file_path, era, is_run3=False, wp_medium=None, wp_tight=None):
         """
         Initialize the calculator with SF JSON and Efficiency ROOT files.
 
@@ -13,6 +13,8 @@ class BTagWeightCalculator:
             eff_file_path (str): Path to the directory containing efficiency histograms (bEff_B.root, etc.).
             era (str): The data era (e.g., "2018").
             is_run3 (bool): Whether the era is Run3 (affects JSON keys and WP values).
+            wp_medium (float): Medium Working Point value.
+            wp_tight (float): Tight Working Point value.
         """
         self.era = era
         self.is_run3 = is_run3
@@ -23,32 +25,33 @@ class BTagWeightCalculator:
         self.cset = correctionlib.CorrectionSet.from_file(json_file)
 
         # Define Working Points (WPs)
-        # Values taken from your C++ code (makeVariables_goodCode/include/inputMap_MV.h / generic logic)
-        # You might need to update these specific values for your exact campaign
+        # Prefer passed values, otherwise fall back to defaults
+        self.wp_medium = wp_medium
+        self.wp_tight = wp_tight
+
         if self.is_run3:
-            # Run3 (ParticleNet) WPs - Example placeholder values, check your inputMap_MV.h
-            self.wp_medium = 0.2605  # Example for 2022
-            self.wp_tight = 0.6915   # Example for 2022
+            # Run3 (ParticleNet) WPs
+            if self.wp_medium is None: self.wp_medium = 0.2605  # Placeholder
+            if self.wp_tight is None: self.wp_tight = 0.6915   # Placeholder
             self.json_key_comb = "robustParticleTransformer_comb"
             self.json_key_light = "robustParticleTransformer_light"
         else:
             # Run2 (DeepJet) WPs - UL
-            if "2016preVFP" in self.era:
-                self.wp_medium = 0.2598
-                self.wp_tight = 0.6502
-            elif "2016postVFP" in self.era:
-                self.wp_medium = 0.2489
-                self.wp_tight = 0.6377
-            elif "2017" in self.era:
-                self.wp_medium = 0.3040
-                self.wp_tight = 0.7476
-            elif "2018" in self.era:
-                self.wp_medium = 0.2783
-                self.wp_tight = 0.7100
-            else:
-                # Default to 2018 if unknown
-                self.wp_medium = 0.2783
-                self.wp_tight = 0.7100
+            if self.wp_medium is None or self.wp_tight is None:
+                if "2016preVFP" in self.era:
+                    def_m, def_t = 0.2598, 0.6502
+                elif "2016postVFP" in self.era:
+                    def_m, def_t = 0.2489, 0.6377
+                elif "2017" in self.era:
+                    def_m, def_t = 0.3040, 0.7476
+                elif "2018" in self.era:
+                    def_m, def_t = 0.2783, 0.7100
+                else:
+                    # Default to 2018 if unknown
+                    def_m, def_t = 0.2783, 0.7100
+
+                if self.wp_medium is None: self.wp_medium = def_m
+                if self.wp_tight is None: self.wp_tight = def_t
 
             self.json_key_comb = "deepJet_comb"
             self.json_key_light = "deepJet_incl"
@@ -119,17 +122,8 @@ class BTagWeightCalculator:
             if disc < 0.0 or disc > 1.0:
                 continue # Or handle error
 
-            # Systematics Logic (from C++)
-            # "cferr" only applies to c-jets (4)
-            # others apply to b/light (5, 0)
-
+            # Simplified Systematics Logic: Apply passed systematic to all flavors
             apply_sys = sys
-            if "cferr" in sys:
-                if flav != 4:
-                    apply_sys = "central"
-            else:
-                if flav == 4:
-                    apply_sys = "central"
 
             try:
                 # Evaluate SF
@@ -191,30 +185,39 @@ class BTagWeightCalculator:
                  # eff_t = self.get_btag_eff_tight(pt, eta, flav)
                  pass
 
-            # 3. Calculate Probabilities
+            # 3. Calculate Probabilities with Clamping to prevent negative weights
             is_tagged = disc > self.wp_medium
             is_tagged_t = disc > self.wp_tight
+
+            term_mc = 1.0
+            term_data = 1.0
 
             if not exclusive_tight:
                 # Standard method (Medium inclusive)
                 if is_tagged:
-                    p_mc *= eff
-                    p_data *= (sf * eff)
+                    term_mc = eff
+                    term_data = sf * eff
                 else:
-                    p_mc *= (1.0 - eff)
-                    p_data *= (1.0 - sf * eff)
+                    term_mc = 1.0 - eff
+                    term_data = 1.0 - sf * eff
             else:
                 # Exclusive method (Tight vs Medium-Not-Tight vs Fail)
-                # Requires Tight Efficiencies to be loaded!
                 if is_tagged_t:
-                    p_mc *= eff_t
-                    p_data *= (sf_t * eff_t)
+                    term_mc = eff_t
+                    term_data = sf_t * eff_t
                 elif is_tagged: # Medium but not Tight
-                    p_mc *= (eff - eff_t)
-                    p_data *= (sf * eff - sf_t * eff_t)
+                    term_mc = eff - eff_t
+                    term_data = sf * eff - sf_t * eff_t
                 else: # Fail Medium
-                    p_mc *= (1.0 - eff)
-                    p_data *= (1.0 - sf * eff)
+                    term_mc = 1.0 - eff
+                    term_data = 1.0 - sf * eff
+
+            # Clamp terms to >= 0
+            term_mc = max(0.0, term_mc)
+            term_data = max(0.0, term_data)
+
+            p_mc *= term_mc
+            p_data *= term_data
 
         # Avoid division by zero
         if p_mc == 0:
