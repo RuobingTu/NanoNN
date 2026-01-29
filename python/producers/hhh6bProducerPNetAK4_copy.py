@@ -1407,9 +1407,12 @@ class hhh6bProducerPNetAK4(Module):
         puid = 3 if '2016' in str(self.year)  else 6
         # process puid 3 or 7 for 2016 and 6 and 7 for 2018
         #event.ak4jetsUnclean = [j for j in event._allJets if j.pt > 20 and abs(j.eta) < 2.5 and j.jetId >= 6 and j.btagPNetB > AK4PNetBWP[str(self.year)]["L"]]
-        event.ak4jetsUnclean = [j for j in event._allJets if j.pt > 20 and abs(j.eta) < 2.5 and j.jetId >= 6]
-        event.ak4jets = [ j for j in event.ak4jetsUnclean if closest(j,event.cleaningMuons)[1]>0.5 and closest(j, event.cleaningElectrons)[1]>0.5 and closest(j, event.looseTaus)[1]>0.5]
+        event.ak4jetsUnclean = [j for j in event._allJets if j.pt > 20 and abs(j.eta) < 2.5 and j.jetId >= 2 and ( (j.pt < 50 and j.puId>=puid) or (j.pt >= 50) )]
+        if "2016" not in str(self.year):
+            event.ak4jetsUnclean = [j for j in event.ak4jetsUnclean if abs(j.eta) < 2.4]
+        event.ak4jets = [ j for j in event.ak4jetsUnclean if closest(j,event.cleaningMuons)[1]>0.5 and closest(j, event.cleaningElectrons)[1]>0.5 and closest(j, event.looseTaus)[1]>0.5 and j.jetId >= 6]
         event.ak4jets_PTcut30 = [j for j in event._allJets if j.pt > 30 and abs(j.eta) < 2.5 and (j.jetId & 2)]
+
         
 
         self.nFatJets = int(len(event.fatjets))
@@ -2921,15 +2924,15 @@ class hhh6bProducerPNetAK4(Module):
         self.fillLepPairInfo(event, event.looseLeptons, event.kind_category,  event.looseTaus)
 
         if self.isMC and self.btag_calculator:
-            jets_pt = [j.pt for j in event.ak4jets]
-            jets_eta = [j.eta for j in event.ak4jets]
-            jets_flavour = [j.hadronFlavour for j in event.ak4jets]
+            jets_pt = [j.pt for j in event.ak4jetsUnclean]
+            jets_eta = [j.eta for j in event.ak4jetsUnclean]
+            jets_flavour = [j.hadronFlavour for j in event.ak4jetsUnclean]
 
             # Use discriminator matching the era (DeepJet for Run2, PNet for Run3)
             if self.is_run3:
-                jets_btag = [j.btagPNetB for j in event.ak4jets]
+                jets_btag = [j.btagPNetB for j in event.ak4jetsUnclean]
             else:
-                jets_btag = [j.btagDeepFlavB for j in event.ak4jets]
+                jets_btag = [j.btagDeepFlavB for j in event.ak4jetsUnclean]
 
             w_shape = self.btag_calculator.calc_shape_weight(jets_pt, jets_eta, jets_flavour, jets_btag)
             w_M = self.btag_calculator.calc_wp_weight(jets_pt, jets_eta, jets_flavour, jets_btag, wp="M")
