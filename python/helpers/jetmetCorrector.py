@@ -1,3 +1,24 @@
+"""
+Jet and MET Corrector
+=====================
+
+Applies JEC, JER, and MET corrections to NanoAOD events.
+
+Current production config (v9 UL):
+  jec=False  - NanoAOD v9 already has JEC applied
+  jer='nominal' - JER smearing for MC (AK4 + AK8 + subjets)
+  allJME=False  - no systematic variations at producer level
+
+Key modification (2026-02-11): decoupled JER-only mode from JEC tarball loading.
+  - Lines ~155, ~261, ~322-326: allow jer='nominal' without requiring JEC tarballs
+  - This is needed because per-run-period DATA JEC tarballs don't exist for all eras
+
+JER tarballs location: NanoAODTools/data/jme/ (e.g., Fall17_V3_MC.tgz)
+
+Classes:
+  JetMETCorrector - main class for jet/MET corrections
+  rndSeed()       - deterministic random seed from event info (for JER smearing)
+"""
 import os
 import tempfile
 import shutil
@@ -152,7 +173,7 @@ class JetMETCorrector(object):
 
     def beginJob(self):
         # set up JEC
-        if self.jec or self.jes in ['up', 'down'] or self.correctMET:
+        if self.jec or self.jes in ['up', 'down']:
             for library in ["libCondFormatsJetMETObjects", "libPhysicsToolsNanoAODTools"]:
                 if library not in ROOT.gSystem.GetLibraries():
                     # logger.info("Load Library '%s'" % library.replace("lib", ""))
@@ -258,18 +279,17 @@ class JetMETCorrector(object):
             j.rawP4 = polarP4(j) * (1. - j.rawFactor)
             j._jecFactor = None
             j._jecFactorL1 = None
-            if self.jec or (isMC and met is not None):
+            if self.jec:
                 if isMC:
                     jetCorrector = self.jetCorrectorMC
                 else:
                     tag = next(run for iov, run in reversed(self.dataTags) if iov <= runNumber)
                     jetCorrector = self.jetCorrectorsDATA[tag]
                 j._jecFactor = jetCorrector.getCorrection(j, rho)
-                if self.jec:
-                    j.pt = j.rawP4.pt() * j._jecFactor
-                    #if 'EC2' in self.jes_source:
-                    #    print('jecFactor ',j._jecFactor)
-                    j.mass = j.rawP4.mass() * j._jecFactor
+                j.pt = j.rawP4.pt() * j._jecFactor
+                #if 'EC2' in self.jes_source:
+                #    print('jecFactor ',j._jecFactor)
+                j.mass = j.rawP4.mass() * j._jecFactor
                 if met is not None:
                     j._jecFactorL1 = jetCorrector.getCorrection(j, rho, 'L1FastJet')
 
@@ -321,7 +341,10 @@ class JetMETCorrector(object):
             # last thing: calc MET type-1 correction
             j._t1MetDelta = None
             if met is not None:
-                j._t1MetDelta = self.calcT1Corr(j) + self.calcT1CorrEEFix(j)
+                if j._jecFactor is not None:
+                    j._t1MetDelta = self.calcT1Corr(j) + self.calcT1CorrEEFix(j)
+                else:
+                    j._t1MetDelta = np.zeros(2, dtype='float')
 
         # correct MET
         if met is not None:

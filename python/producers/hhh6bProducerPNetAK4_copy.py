@@ -1,3 +1,56 @@
+"""
+HHH -> 4b2tau NanoAOD Post-Processing Producer
+================================================
+
+Main event producer for the HHH -> 4b + 2tau semi-leptonic analysis.
+Reads CMS NanoAOD (v9 UL) and outputs a flat ntuple with derived quantities
+for SPANet training and downstream analysis.
+
+Pipeline position: Step 1 (NanoAOD -> flat ntuple)
+  NanoAOD input -> this producer -> ROOT output in pieces/ -> merge -> add weights -> H5 -> SPANet
+
+What this producer does (option 92):
+  1. Trigger selection (year-dependent HLT paths for tau/lepton/cross triggers)
+  2. Object selection:
+     - AK4 jets: pT>20, |eta|<2.5, jetId>=2, up to 10 stored
+     - AK8 fat jets: pT>200, |eta|<2.4, up to 4 stored
+     - Taus: pT>20, |eta|<2.3, DeepTau VSjet>=16 (medium WP), up to 4 stored
+     - Electrons: pT>7, |eta|<2.5, WP90 or cutBased>=2
+     - Muons: pT>5, |eta|<2.4, mediumId or looseId
+  3. Event categorization:
+     - kind_category: 0=2tau0l, 1=1tau1l, 2=1tau0l, 3=0tau2l (used for trigger paths)
+     - kind_category_analysis: same but with tighter analysis WPs
+  4. Corrections (MC only):
+     - JER nominal smearing (AK4 + AK8 + subjets)
+     - Tau energy scale (TES) via correctionlib
+     - B-tag shape SF (DeepFlavB, 16 systematic variations)
+     - JMS/JMR for AK8 soft-drop mass
+  5. Derived quantities:
+     - Jet pair kinematics (mass, pT, eta, phi, deltaR for all 45 pairs)
+     - Tau pair kinematics (higgs3_mass_manu, higgs3_pt_manu, etc.)
+     - FastMTT di-tau mass for leptonic channels
+     - PNet discriminators: PNetBvsC, PNetBCvsL, PNetCat (0-10 ordinal)
+     - B-candidate selection (top 6 b-tagged jets)
+     - Z veto for 0tau2l channel: |mll(OSSF) - 91.2| < 10 GeV
+  6. Output branches for fake rate measurement:
+     - Tau: idDeepTau2017v2p1VSe/VSmu bitmasks, jetPt/jetEta (mother jet)
+     - Lepton: miniPFRelIso_all, passAnalysisId, passAnalysisWP
+     - Event: ntaus_analysis, nleps_analysis
+
+Key configuration (hhh6b_cfg.json):
+  - jet_type: AK4PFchs
+  - year: 2016/2016APV/2017/2018
+  - jec/jes/jer/allJME: correction toggles
+
+File structure (~3200 lines):
+  - __init__: parse config, set up options
+  - beginFile (~line 423): define output branches, load corrections
+  - selectLeptons (~line 1079): object selection and categorization
+  - correctTauES: tau energy scale correction
+  - fillBaseEventInfo (~line 2542): fill output branches
+  - analyze: main event loop (trigger -> selection -> corrections -> fill)
+  - kind_category logic (~line 3082): event categorization
+"""
 import os
 import itertools
 import ROOT
@@ -19,6 +72,7 @@ from PhysicsTools.NanoNN.helpers.utils import closest, sumP4, polarP4, configLog
 from PhysicsTools.NanoNN.helpers.nnHelper import convert_prob, ensemble
 from PhysicsTools.NanoNN.helpers.massFitter import fitMass
 from PhysicsTools.NanoNN.helpers.btagWeightCalculator import BTagWeightCalculator
+import correctionlib
 
 import logging
 logger = logging.getLogger('nano')
@@ -34,6 +88,48 @@ class _NullObject:
         pass
     def __setattr__(self, name, value):
         pass
+
+def assignPNetCat(bvsc, bcvsl, wp):
+    """Assign 2D PNet category (0-10) following AN2023_028 Tables 15-16.
+    0=most light-like, 10=most b-like (B4)."""
+    bcvsl_cut = wp["bcvslight"]
+    c1_lo = wp["c1_lo"]
+    c0_lo = wp["c0_lo"]
+    thr = wp["bvsc_thresholds"]  # [0.99, 0.96, 0.88, 0.70, 0.40, 0.15, 0.05]
+    if bcvsl < c0_lo:
+        return 0   # bin 0 (most light-like)
+    if bcvsl < c1_lo:
+        return 1   # C0
+    if bcvsl < bcvsl_cut:
+        return 2   # C1
+    # bcvsl >= bcvsl_cut: split by bvsc
+    if bvsc >= thr[0]:
+        return 10  # B4
+    if bvsc >= thr[1]:
+        return 9   # B3
+    if bvsc >= thr[2]:
+        return 8   # B2
+    if bvsc >= thr[3]:
+        return 7   # B1
+    if bvsc >= thr[4]:
+        return 6   # B0
+    if bvsc >= thr[5]:
+        return 3   # C2
+    if bvsc >= thr[6]:
+        return 4   # C3
+    return 5       # C4
+
+# Year-dependent 2D PNet working points (AN2023_028 Tables 15-16)
+_PNetCat_WP = {
+    "2017": {"bcvslight": 0.5, "c1_lo": 0.2, "c0_lo": 0.1,
+             "bvsc_thresholds": [0.99, 0.96, 0.88, 0.70, 0.40, 0.15, 0.05]},
+    "2018": {"bcvslight": 0.5, "c1_lo": 0.2, "c0_lo": 0.1,
+             "bvsc_thresholds": [0.99, 0.96, 0.88, 0.70, 0.40, 0.15, 0.05]},
+    "2016": {"bcvslight": 0.35, "c1_lo": 0.17, "c0_lo": 0.1,
+             "bvsc_thresholds": [0.99, 0.96, 0.88, 0.70, 0.40, 0.15, 0.05]},
+    "2016APV": {"bcvslight": 0.35, "c1_lo": 0.17, "c0_lo": 0.1,
+                "bvsc_thresholds": [0.99, 0.96, 0.88, 0.70, 0.40, 0.15, 0.05]},
+}
 
 class METObject(Object):
     def p4(self):
@@ -112,7 +208,7 @@ class hhh6bProducerPNetAK4(Module):
                           'jer': None, 'met_unclustered': None, 'smearMET': False, 'applyHEMUnc': False}
         self._opts = {'run_mass_regression': False, 'mass_regression_versions': ['ak8V01a', 'ak8V01b', 'ak8V01c'],
                       'WRITE_CACHE_FILE': False, 'option': "1", 'allJME': False,
-                      'btag_json_file': None, 'btag_eff_file_path': None}
+                      'btag_json_file': None}
         for k in kwargs:
             if k in self._jmeSysts:
                 self._jmeSysts[k] = kwargs[k]
@@ -151,6 +247,70 @@ class hhh6bProducerPNetAK4(Module):
         self.DeepFlavB_WP_T = {"2016preVFP": 0.6502, "2016postVFP": 0.6377, "2017": 0.7476, "2018": 0.7100, "2022": 0.7183, "2022EE": 0.7183, "2023": 0.7183, "2023BPix": 0.7183}[str(self.year)]
         
         self.btag_calculator = None
+
+        self.tau_corr = None  # Loaded in beginFile after isMC is known
+
+        # Multi-trigger path definitions (year-dependent)
+        year_str = str(self.year)
+        self._trigger_defs = {
+            'JetHT': {
+                '2016': ['HLT_QuadJet45_TripleBTagCSV_p087'],
+                '2016APV': ['HLT_QuadJet45_TripleBTagCSV_p087'],
+                '2016preVFP': ['HLT_QuadJet45_TripleBTagCSV_p087'],
+                '2016postVFP': ['HLT_QuadJet45_TripleBTagCSV_p087'],
+                '2017': ['HLT_PFHT300PT30_QuadPFJet_75_60_45_40_TriplePFBTagCSV_3p0'],
+                '2018': ['HLT_PFHT330PT30_QuadPFJet_75_60_45_40_TriplePFBTagDeepCSV_4p5'],
+            },
+            'SingleTau': {
+                '2016': ['HLT_MediumChargedIsoPFTau180HighPtRelaxedIso_Trk50_eta2p1'],
+                '2016APV': ['HLT_MediumChargedIsoPFTau180HighPtRelaxedIso_Trk50_eta2p1'],
+                '2016preVFP': ['HLT_MediumChargedIsoPFTau180HighPtRelaxedIso_Trk50_eta2p1'],
+                '2016postVFP': ['HLT_MediumChargedIsoPFTau180HighPtRelaxedIso_Trk50_eta2p1'],
+                '2017': ['HLT_MediumChargedIsoPFTau180HighPtRelaxedIso_Trk50_eta2p1'],
+                '2018': ['HLT_MediumChargedIsoPFTau180HighPtRelaxedIso_Trk50_eta2p1'],
+            },
+            'DoubleTau': {
+                '2016': ['HLT_DoubleMediumIsoPFTau35_Trk1_eta2p1_Reg'],
+                '2016APV': ['HLT_DoubleMediumIsoPFTau35_Trk1_eta2p1_Reg'],
+                '2016preVFP': ['HLT_DoubleMediumIsoPFTau35_Trk1_eta2p1_Reg'],
+                '2016postVFP': ['HLT_DoubleMediumIsoPFTau35_Trk1_eta2p1_Reg'],
+                '2017': ['HLT_DoubleTightChargedIsoPFTau35_Trk1_TightID_eta2p1_Reg'],
+                '2018': ['HLT_DoubleTightChargedIsoPFTau35_Trk1_TightID_eta2p1_Reg'],
+            },
+            'SingleMu': {
+                '2016': ['HLT_IsoMu24'],
+                '2016APV': ['HLT_IsoMu24'],
+                '2016preVFP': ['HLT_IsoMu24'],
+                '2016postVFP': ['HLT_IsoMu24'],
+                '2017': ['HLT_IsoMu27'],
+                '2018': ['HLT_IsoMu24'],
+            },
+            'SingleEle': {
+                '2016': ['HLT_Ele27_WPTight_Gsf'],
+                '2016APV': ['HLT_Ele27_WPTight_Gsf'],
+                '2016preVFP': ['HLT_Ele27_WPTight_Gsf'],
+                '2016postVFP': ['HLT_Ele27_WPTight_Gsf'],
+                '2017': ['HLT_Ele32_WPTight_Gsf_L1DoubleEG_v', 'HLT_Ele32_WPTight_Gsf'],  #fix
+                '2018': ['HLT_Ele32_WPTight_Gsf'],
+            },
+            'CrossMuTau': {
+                '2016': ['HLT_IsoMu19_eta2p1_LooseIsoPFTau20_SingleL1'],
+                '2016APV': ['HLT_IsoMu19_eta2p1_LooseIsoPFTau20_SingleL1'],
+                '2016preVFP': ['HLT_IsoMu19_eta2p1_LooseIsoPFTau20_SingleL1'],
+                '2016postVFP': ['HLT_IsoMu19_eta2p1_LooseIsoPFTau20_SingleL1'],
+                '2017': ['HLT_IsoMu20_eta2p1_LooseChargedIsoPFTau27_eta2p1_CrossL1'],
+                '2018': ['HLT_IsoMu20_eta2p1_LooseChargedIsoPFTau27_eta2p1_CrossL1'],
+            },
+            'CrossEleTau': {
+                '2016': ['HLT_Ele24_eta2p1_WPTight_Gsf_LooseChargedIsoPFTau30_eta2p1_CrossL1'],
+                '2016APV': ['HLT_Ele24_eta2p1_WPTight_Gsf_LooseChargedIsoPFTau30_eta2p1_CrossL1'],
+                '2016preVFP': ['HLT_Ele24_eta2p1_WPTight_Gsf_LooseChargedIsoPFTau30_eta2p1_CrossL1'],
+                '2016postVFP': ['HLT_Ele24_eta2p1_WPTight_Gsf_LooseChargedIsoPFTau30_eta2p1_CrossL1'],
+                '2017': ['HLT_Ele24_eta2p1_WPTight_Gsf_LooseChargedIsoPFTau30_eta2p1_CrossL1'],
+                '2018': ['HLT_Ele24_eta2p1_WPTight_Gsf_LooseChargedIsoPFTau30_eta2p1_CrossL1'],
+            },
+        }
+
         # Determine is_run3 from year string
         self.is_run3 = False
         year_str = str(self.year)
@@ -177,19 +337,14 @@ class hhh6bProducerPNetAK4(Module):
 
             btag_json_path = os.path.join(base_path, folder, "btagging.json.gz")
 
-        btag_eff_path = self._opts.get('btag_eff_file_path')
-
-        if btag_json_path and btag_eff_path:
+        if btag_json_path:
              try:
                  self.btag_calculator = BTagWeightCalculator(
                      btag_json_path,
-                     btag_eff_path,
                      year_str,
-                     is_run3=self.is_run3,
-                     wp_medium=self.DeepFlavB_WP_M,
-                     wp_tight=self.DeepFlavB_WP_T
+                     is_run3=self.is_run3
                  )
-                 logger.info("Initialized BTagWeightCalculator with JSON: %s", btag_json_path)
+                 logger.info("Initialized BTagWeightCalculator (shape SF only) with JSON: %s", btag_json_path)
              except Exception as e:
                  logger.warning(f"Failed to initialize BTagWeightCalculator: {e}")
 
@@ -329,7 +484,7 @@ class hhh6bProducerPNetAK4(Module):
         if self._opts['option']=="5": print('Select Events with FatJet1 pT > 200 GeV and PNetXbb > 0.8 only')
         elif self._opts['option']=="10": print('Select FatJets with pT > 200 GeV and tau3/tau2 < 0.54 only')
         elif self._opts['option']=="21": print('Select FatJets with pT > 250 GeV and mass > 30 only')
-        elif self._opts['option']=="92": print('Select HLT_PFHT300PT30_QuadPFJet_75_60_45_40_TriplePFBTagCSV_3p0')
+        elif self._opts['option']=="92": print('Select multi-trigger paths (JetHT, SingleTau, DoubleTau, SingleLep, CrossTrig)')
         else: print('No selection')
 
         # trigger Efficiency
@@ -365,6 +520,21 @@ class hhh6bProducerPNetAK4(Module):
     def beginFile(self, inputFile, outputFile, inputTree, wrappedOutputTree):
         self.isMC = bool(inputTree.GetBranch('genWeight'))
 
+        # Load TES correction (once, on first file)
+        if self.isMC and self.tau_corr is None:
+            tau_base = os.path.expandvars('$CMSSW_BASE/src/PhysicsTools/NanoNN/data/POG/TAU')
+            tau_folder = {"2016preVFP": "2016preVFP_UL", "2016postVFP": "2016postVFP_UL",
+                          "2017": "2017_UL", "2018": "2018_UL"}
+            folder = tau_folder.get(str(self.year))
+            if folder:
+                tau_json = os.path.join(tau_base, folder, "tau.json.gz")
+                try:
+                    cset = correctionlib.CorrectionSet.from_file(tau_json)
+                    self.tau_corr = cset["tau_energy_scale"]
+                    logger.info("Loaded TES correction from %s", tau_json)
+                except Exception as e:
+                    logger.warning("Failed to load TES correction: %s", e)
+
        
         # remove all possible h5 cache files
         for f in os.listdir('.'):
@@ -399,10 +569,25 @@ class hhh6bProducerPNetAK4(Module):
         self.out.branch("triggerEffMC3DWeight", "F")
 
         if self.isMC:
+             # B-tagging shape SF weights (central + systematics)
              self.out.branch("btagWeight_shape", "F")
-             self.out.branch("btagWeight_L", "F")
-             self.out.branch("btagWeight_M", "F")
-             self.out.branch("btagWeight_T", "F")
+             # Systematic variations
+             self.out.branch("btagWeight_shape_lf_up", "F")
+             self.out.branch("btagWeight_shape_lf_down", "F")
+             self.out.branch("btagWeight_shape_hf_up", "F")
+             self.out.branch("btagWeight_shape_hf_down", "F")
+             self.out.branch("btagWeight_shape_hfstats1_up", "F")
+             self.out.branch("btagWeight_shape_hfstats1_down", "F")
+             self.out.branch("btagWeight_shape_hfstats2_up", "F")
+             self.out.branch("btagWeight_shape_hfstats2_down", "F")
+             self.out.branch("btagWeight_shape_lfstats1_up", "F")
+             self.out.branch("btagWeight_shape_lfstats1_down", "F")
+             self.out.branch("btagWeight_shape_lfstats2_up", "F")
+             self.out.branch("btagWeight_shape_lfstats2_down", "F")
+             self.out.branch("btagWeight_shape_cferr1_up", "F")
+             self.out.branch("btagWeight_shape_cferr1_down", "F")
+             self.out.branch("btagWeight_shape_cferr2_up", "F")
+             self.out.branch("btagWeight_shape_cferr2_down", "F")
 
         # fatjets
         self.out.branch("nfatjets","I")
@@ -710,14 +895,24 @@ class hhh6bProducerPNetAK4(Module):
         # more small jets
         self.out.branch("nsmalljets", "I")
         self.out.branch("ntaus", "I")
-        self.out.branch("ntau", "I")
         self.out.branch("nleps", "I")
         self.out.branch("nbtags", "I")
         self.out.branch("nSmallJets30", 'I')
         self.out.branch("nFatJets_rt", 'I')
         self.out.branch("nrawTaus_rt", 'I')
         self.out.branch("kind_category", 'I')
-        
+        self.out.branch("ntaus_analysis", "I")
+        self.out.branch("nleps_analysis", "I")
+        self.out.branch("kind_category_analysis", 'I')
+
+        # Multi-trigger path branches
+        self.out.branch("trigger_path", "I")  # 0=none, 1=JetHT, 2=SingleTau, 3=DoubleTau, 4=SingleLep, 5=CrossTrig
+        self.out.branch("pass_trig_JetHT", "O")
+        self.out.branch("pass_trig_SingleTau", "O")
+        self.out.branch("pass_trig_DoubleTau", "O")
+        self.out.branch("pass_trig_SingleLep", "O")
+        self.out.branch("pass_trig_CrossTrig", "O")
+
         for idx in ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]):
             prefix = 'jet%i'%idx
             self.out.branch(prefix + "Pt", "F")
@@ -725,6 +920,9 @@ class hhh6bProducerPNetAK4(Module):
             self.out.branch(prefix + "Phi", "F")
             self.out.branch(prefix + "DeepFlavB", "F")
             self.out.branch(prefix + "PNetB", "F")
+            self.out.branch(prefix + "PNetBvsC", "F")
+            self.out.branch(prefix + "PNetBCvsL", "F")
+            self.out.branch(prefix + "PNetCat", "I")
             self.out.branch(prefix + "Mass", "F")
             self.out.branch(prefix + "RawFactor", "F")
             self.out.branch(prefix + "MatchedGenPt", "F")
@@ -761,6 +959,9 @@ class hhh6bProducerPNetAK4(Module):
             self.out.branch(prefix + "Phi", "F")
             self.out.branch(prefix + "DeepFlavB", "F")
             self.out.branch(prefix + "PNetB", "F")
+            self.out.branch(prefix + "PNetBvsC", "F")
+            self.out.branch(prefix + "PNetBCvsL", "F")
+            self.out.branch(prefix + "PNetCat", "I")
             self.out.branch(prefix + "JetId", "F")
             self.out.branch(prefix + "PuId", "F")
             self.out.branch(prefix + "Mass", "F")
@@ -786,6 +987,11 @@ class hhh6bProducerPNetAK4(Module):
             self.out.branch(prefix + "kind", "I")
             self.out.branch(prefix + "IfHiggsTau", "I")
             self.out.branch(prefix + "genPartFlav", "I")
+            self.out.branch(prefix + "miniPFRelIso_all", "F")
+            self.out.branch(prefix + "passAnalysisId", "O")   # WP90 for e, mediumId for mu
+            self.out.branch(prefix + "passAnalysisWP", "O")   # tighter ID + tighter isolation
+
+        self.out.branch("mll", "F")  # dilepton invariant mass (0tau2l channel)
 
         for idx in ([1, 2, 3, 4]):
             prefix = 'tau%i'%idx
@@ -804,6 +1010,10 @@ class hhh6bProducerPNetAK4(Module):
             self.out.branch(prefix + "rawDeepTau2017v2p1VSjet", "F")
             self.out.branch(prefix + "rawDeepTau2017v2p1VSmu", "F")
             self.out.branch(prefix + "idDeepTau2017v2p1VSjet", "I")
+            self.out.branch(prefix + "idDeepTau2017v2p1VSe", "I")
+            self.out.branch(prefix + "idDeepTau2017v2p1VSmu", "I")
+            self.out.branch(prefix + "jetPt", "F")   # mother jet pT for fake rate measurement
+            self.out.branch(prefix + "jetEta", "F")   # mother jet eta for fake rate measurement
 
         # gen variables
         for idx in ([1, 2, 3]):
@@ -1016,10 +1226,14 @@ class hhh6bProducerPNetAK4(Module):
             if el.pt > 7 and abs(el.eta) < 2.5 and abs(el.dxy) < 0.05 and abs(el.dz) < 0.2:
                 event.vbfLeptons.append(el)
             if self.Run==2:
-                if el.pt > 10 and abs(el.eta) <= 2.5 and abs(el.dxy) < 0.045 and abs(el.dz) < 0.2 and el.miniPFRelIso_all <= 0.2 and el.lostHits <= 1 and el.convVeto and el.mvaFall17V2noIso_WP90: #and el.cutBased>3: # cutBased ID: (0:fail, 1:veto, 2:loose, 3:medium, 4:tight)
+                if el.pt > 10 and abs(el.eta) <= 2.5 and abs(el.dxy) < 0.045 and abs(el.dz) < 0.2 and el.miniPFRelIso_all <= 0.4 and el.lostHits <= 1 and el.convVeto and el.mvaFall17V2noIso_WPL: # Loose pool: MiniIso<0.4 + MVA noIso WPL. SR uses WP90 + MiniIso<0.1.
+                    el.passAnalysisId = bool(el.mvaFall17V2noIso_WP90)
+                    el.passAnalysisWP = bool(el.mvaFall17V2noIso_WP90 and el.miniPFRelIso_all < 0.1)
                     event.looseLeptons.append(el)
             else:
-                if el.pt > 10 and abs(el.eta) <= 2.5 and abs(el.dxy) < 0.045 and abs(el.dz) < 0.2 and el.miniPFRelIso_all <= 0.2 and el.lostHits <= 1 and el.convVeto and el.mvaNoIso_WP90: #and el.cutBased>3: # cutBased ID: (0:fail, 1:veto, 2:loose, 3:medium, 4:tight)
+                if el.pt > 10 and abs(el.eta) <= 2.5 and abs(el.dxy) < 0.045 and abs(el.dz) < 0.2 and el.miniPFRelIso_all <= 0.4 and el.lostHits <= 1 and el.convVeto and el.mvaNoIso_WPL: # Loose pool: MiniIso<0.4 + MVA noIso WPL
+                    el.passAnalysisId = bool(el.mvaNoIso_WP90)
+                    el.passAnalysisWP = bool(el.mvaNoIso_WP90 and el.miniPFRelIso_all < 0.1)
                     event.looseLeptons.append(el)
             if self.Run==2:
                 if el.pt > 30 and el.mvaFall17V2noIso_WP90:
@@ -1036,13 +1250,17 @@ class hhh6bProducerPNetAK4(Module):
             mu.decayMode = -1
             if mu.pt > 5 and abs(mu.eta) < 2.4 and abs(mu.dxy) < 0.05 and abs(mu.dz) < 0.2:
                 event.vbfLeptons.append(mu)
-            if mu.pt > 10 and abs(mu.eta) <= 2.4 and abs(mu.dxy) < 0.045 and abs(mu.dz) < 0.2 and mu.mediumId and mu.miniPFRelIso_all <= 0.2: # mu.tightId
+            # Loose pool: looseId + MiniIso<0.4. SR uses mediumId + MiniIso<0.2. Trigger SF uses tightId + PFIso04<0.15.
+            if mu.pt > 10 and abs(mu.eta) <= 2.4 and abs(mu.dxy) < 0.045 and abs(mu.dz) < 0.2 and mu.looseId and mu.miniPFRelIso_all < 0.4:
+                mu.passAnalysisId = bool(mu.mediumId)
+                mu.passAnalysisWP = bool(mu.mediumId and mu.miniPFRelIso_all < 0.2)
                 event.looseLeptons.append(mu)
             if mu.pt > 30 and mu.looseId:
                 event.cleaningMuons.append(mu)
         
 
         taus = Collection(event, "Tau")
+        jets_for_tau = Collection(event, "Jet")  # for mother jet lookup (fake rate)
         for tau in taus:
             self.correctTauES(tau)
             tau.Id = tau.charge * (-15)
@@ -1050,6 +1268,13 @@ class hhh6bProducerPNetAK4(Module):
             if tau.decayMode==0: tau.mass = 0.13957
             if self.Run==2:
                 if tau.pt > 20 and abs(tau.eta) <= 2.3 and abs(tau.dz) < 0.2 and (tau.decayMode in [0,1,2,10,11]) and tau.idDeepTau2017v2p1VSe >= 2 and tau.idDeepTau2017v2p1VSmu >= 1 and tau.idDeepTau2017v2p1VSjet >= 2:
+                    # Mother jet info for fake rate binning (AN2022_083 Section 6)
+                    if tau.jetIdx >= 0 and tau.jetIdx < len(jets_for_tau):
+                        tau.jetPt = jets_for_tau[tau.jetIdx].pt
+                        tau.jetEta = jets_for_tau[tau.jetIdx].eta
+                    else:
+                        tau.jetPt = -1.0
+                        tau.jetEta = -99.0
                     event.looseTaus.append(tau) # All loosest WPs. To use later: VVloose VsE (2), VLoose vsMu (1), Loose Vsjet (8)
         
         cutTaus = Collection(event, "Tau")
@@ -1101,6 +1326,9 @@ class hhh6bProducerPNetAK4(Module):
         self.nTaus = int(len(event.looseTaus))
         self.nLeps = int(len(event.looseLeptons))
         self.nrawTaus = event.nTau
+        # Analysis WP counts: tau Loose VSjet(>=8), electron WP90+MiniIso<0.1, muon mediumId+MiniIso<0.2
+        self.nTaus_analysis = sum(1 for t in event.looseTaus if t.idDeepTau2017v2p1VSjet >= 8)
+        self.nLeps_analysis = sum(1 for l in event.looseLeptons if l.passAnalysisWP)
         #self.nrawTaus = int(len(event.cutTaus))
 
     def GetGenMatch_ofTau(self, event, looseTau):
@@ -1249,8 +1477,8 @@ class hhh6bProducerPNetAK4(Module):
         # correct Jets and MET
         # event.idx = event._entry if event._tree._entrylist is None else event._tree._entrylist.GetEntry(event._entry)
         event._allJets = Collection(event, "Jet")
-        event.met = METObject(event, "METFixEE2017") if self.year == 2017 else METObject(event, "MET")
-        #event.met = METObject(event, "MET")
+        # NanoAOD v9+ already has EE noise fix in MET; METFixEE2017 no longer exists
+        event.met = METObject(event, "MET")
         event._allFatJets = Collection(event, self._fj_name)
         event.subjets = Collection(event, self._sj_name)  # do not sort subjets after updating!!
         
@@ -1384,6 +1612,20 @@ class hhh6bProducerPNetAK4(Module):
             else:
                 j.btagPNetB = -1
 
+            # PNet 2D discriminators (AN2023_028 Eqs. 2-3)
+            denom_bvsc = j.ParticleNetAK4_probc + j.ParticleNetAK4_probcc
+            if denom_bvsc > 0:
+                j.PNetBvsC = (j.ParticleNetAK4_probb + j.ParticleNetAK4_probbb) / denom_bvsc
+            else:
+                j.PNetBvsC = 999.
+            bc = j.ParticleNetAK4_probb + j.ParticleNetAK4_probbb + j.ParticleNetAK4_probc + j.ParticleNetAK4_probcc
+            light = j.ParticleNetAK4_probg + j.ParticleNetAK4_probuds
+            if (bc + light) > 0:
+                j.PNetBCvsL = bc / (bc + light)
+            else:
+                j.PNetBCvsL = 0.
+            j.PNetCat = assignPNetCat(j.PNetBvsC, j.PNetBCvsL, _PNetCat_WP[str(self.year)])
+
             if j.btagDeepFlavB > self.DeepFlavB_WP_L:
                 event.bljets.append(j)
             if j.btagDeepFlavB > self.DeepFlavB_WP_M:
@@ -1503,8 +1745,96 @@ class hhh6bProducerPNetAK4(Module):
                             event.fatjetsJME[syst][i].regressed_massJMS = j.regressed_massJMS
                             
             else:
-                j.regressed_mass = 0          
+                j.regressed_mass = 0
                 j.regressed_massJMS = 0
+
+    def calcBtagWeight(self, event, jets):
+        """
+        Calculate b-tagging shape scale factor weights for the event.
+
+        Uses shape-based reweighting which corrects the btagDeepFlavB discriminator
+        distribution to match data. This is appropriate when using the continuous
+        discriminator value as input to NN/BDT training.
+
+        Args:
+            event: The event object
+            jets: List of jets to calculate weights for (e.g., event.ak4jetsUnclean)
+
+        Returns:
+            dict: Dictionary with systematic name as key and weight as value
+        """
+        # Default weights (all 1.0)
+        default_weights = {
+            'central': 1.0,
+            'up_lf': 1.0, 'down_lf': 1.0,
+            'up_hf': 1.0, 'down_hf': 1.0,
+            'up_hfstats1': 1.0, 'down_hfstats1': 1.0,
+            'up_hfstats2': 1.0, 'down_hfstats2': 1.0,
+            'up_lfstats1': 1.0, 'down_lfstats1': 1.0,
+            'up_lfstats2': 1.0, 'down_lfstats2': 1.0,
+            'up_cferr1': 1.0, 'down_cferr1': 1.0,
+            'up_cferr2': 1.0, 'down_cferr2': 1.0,
+        }
+
+        # Shape SFs disabled for preliminary result — set to 1.0
+        # TODO: re-enable with PNet pseudo-continuous SFs when calibration files are available
+        return default_weights
+
+        if not self.isMC or not self.btag_calculator or len(jets) == 0:
+            return default_weights
+
+        # Extract jet properties
+        jets_pt = [j.pt for j in jets]
+        jets_eta = [j.eta for j in jets]
+        jets_flavour = [j.hadronFlavour for j in jets]
+
+        # Use discriminator matching the era (DeepJet for Run2, PNet for Run3)
+        if self.is_run3:
+            jets_btag = [j.btagPNetB for j in jets]
+        else:
+            jets_btag = [j.btagDeepFlavB for j in jets]
+
+        # Calculate shape weights for all systematics
+        try:
+            weights = self.btag_calculator.calc_shape_weight_with_systematics(
+                jets_pt, jets_eta, jets_flavour, jets_btag
+            )
+        except Exception as e:
+            logger.warning(f"Failed to calculate shape weights: {e}")
+            weights = default_weights
+
+        return weights
+
+    def fillBtagWeight(self, event, jets):
+        """
+        Calculate and fill b-tagging shape weight branches (central + systematics).
+
+        Args:
+            event: The event object
+            jets: List of jets to calculate weights for
+        """
+        weights = self.calcBtagWeight(event, jets)
+
+        # Fill central value
+        self.out.fillBranch("btagWeight_shape", weights['central'])
+
+        # Fill systematic variations
+        self.out.fillBranch("btagWeight_shape_lf_up", weights['up_lf'])
+        self.out.fillBranch("btagWeight_shape_lf_down", weights['down_lf'])
+        self.out.fillBranch("btagWeight_shape_hf_up", weights['up_hf'])
+        self.out.fillBranch("btagWeight_shape_hf_down", weights['down_hf'])
+        self.out.fillBranch("btagWeight_shape_hfstats1_up", weights['up_hfstats1'])
+        self.out.fillBranch("btagWeight_shape_hfstats1_down", weights['down_hfstats1'])
+        self.out.fillBranch("btagWeight_shape_hfstats2_up", weights['up_hfstats2'])
+        self.out.fillBranch("btagWeight_shape_hfstats2_down", weights['down_hfstats2'])
+        self.out.fillBranch("btagWeight_shape_lfstats1_up", weights['up_lfstats1'])
+        self.out.fillBranch("btagWeight_shape_lfstats1_down", weights['down_lfstats1'])
+        self.out.fillBranch("btagWeight_shape_lfstats2_up", weights['up_lfstats2'])
+        self.out.fillBranch("btagWeight_shape_lfstats2_down", weights['down_lfstats2'])
+        self.out.fillBranch("btagWeight_shape_cferr1_up", weights['up_cferr1'])
+        self.out.fillBranch("btagWeight_shape_cferr1_down", weights['down_cferr1'])
+        self.out.fillBranch("btagWeight_shape_cferr2_up", weights['up_cferr2'])
+        self.out.fillBranch("btagWeight_shape_cferr2_down", weights['down_cferr2'])
 
     def fillBaseEventInfo(self, event, fatjets, hadGenHs):
         self.out.fillBranch("ht", event.ht)
@@ -1564,23 +1894,23 @@ class hhh6bProducerPNetAK4(Module):
             self.out.fillBranch("l1PreFiringWeightUp", 1.0)
             self.out.fillBranch("l1PreFiringWeightDown", 1.0)
 
-        # trigger weights
+        # trigger weights — set to 1.0 for MC-only blinding check (TODO: re-enable after trigger SF remeasurement)
         tweight = 1.0
         tweight_mc = 1.0
         tweight_3d = 1.0
         tweight_3d_mc = 1.0
-        if self.isMC:
-            if len(fatjets)>1:
-                tweight = 1.0 - (1.0 - self._teff.getEfficiency(fatjets[0].pt, fatjets[0].msoftdropJMS))*(1.0 - self._teff.getEfficiency(fatjets[1].pt, fatjets[1].msoftdropJMS))
-                tweight_mc = 1.0 - (1.0 - self._teff.getEfficiency(fatjets[0].pt, fatjets[0].msoftdropJMS, -1, True))*(1.0 - self._teff.getEfficiency(fatjets[1].pt, fatjets[1].msoftdropJMS, -1, True))
-                tweight_3d = 1.0 - (1.0 - self._teff.getEfficiency(fatjets[0].pt, fatjets[0].msoftdropJMS, fatjets[0].Xbb))*(1.0 - self._teff.getEfficiency(fatjets[1].pt, fatjets[1].msoftdropJMS, fatjets[1].Xbb))
-                tweight_3d_mc = 1.0 - (1.0 - self._teff.getEfficiency(fatjets[0].pt, fatjets[0].msoftdropJMS, fatjets[0].Xbb, True))*(1.0 - self._teff.getEfficiency(fatjets[1].pt, fatjets[1].msoftdropJMS, fatjets[1].Xbb, True))
-            else:
-                if len(fatjets)>0:
-                    tweight = self._teff.getEfficiency(fatjets[0].pt, fatjets[0].msoftdropJMS)
-                    tweight_mc = self._teff.getEfficiency(fatjets[0].pt, fatjets[0].msoftdropJMS, -1, True)
-                    tweight_3d = self._teff.getEfficiency(fatjets[0].pt, fatjets[0].msoftdropJMS, fatjets[0].Xbb)
-                    tweight_3d_mc = self._teff.getEfficiency(fatjets[0].pt, fatjets[0].msoftdropJMS, fatjets[0].Xbb, True)
+        # if self.isMC:
+        #     if len(fatjets)>1:
+        #         tweight = 1.0 - (1.0 - self._teff.getEfficiency(fatjets[0].pt, fatjets[0].msoftdropJMS))*(1.0 - self._teff.getEfficiency(fatjets[1].pt, fatjets[1].msoftdropJMS))
+        #         tweight_mc = 1.0 - (1.0 - self._teff.getEfficiency(fatjets[0].pt, fatjets[0].msoftdropJMS, -1, True))*(1.0 - self._teff.getEfficiency(fatjets[1].pt, fatjets[1].msoftdropJMS, -1, True))
+        #         tweight_3d = 1.0 - (1.0 - self._teff.getEfficiency(fatjets[0].pt, fatjets[0].msoftdropJMS, fatjets[0].Xbb))*(1.0 - self._teff.getEfficiency(fatjets[1].pt, fatjets[1].msoftdropJMS, fatjets[1].Xbb))
+        #         tweight_3d_mc = 1.0 - (1.0 - self._teff.getEfficiency(fatjets[0].pt, fatjets[0].msoftdropJMS, fatjets[0].Xbb, True))*(1.0 - self._teff.getEfficiency(fatjets[1].pt, fatjets[1].msoftdropJMS, fatjets[1].Xbb, True))
+        #     else:
+        #         if len(fatjets)>0:
+        #             tweight = self._teff.getEfficiency(fatjets[0].pt, fatjets[0].msoftdropJMS)
+        #             tweight_mc = self._teff.getEfficiency(fatjets[0].pt, fatjets[0].msoftdropJMS, -1, True)
+        #             tweight_3d = self._teff.getEfficiency(fatjets[0].pt, fatjets[0].msoftdropJMS, fatjets[0].Xbb)
+        #             tweight_3d_mc = self._teff.getEfficiency(fatjets[0].pt, fatjets[0].msoftdropJMS, fatjets[0].Xbb, True)
         self.out.fillBranch("triggerEffWeight", tweight)
         self.out.fillBranch("triggerEff3DWeight", tweight_3d)
         self.out.fillBranch("triggerEffMCWeight", tweight_mc)
@@ -2037,6 +2367,9 @@ class hhh6bProducerPNetAK4(Module):
             fillBranch(prefix + "Phi", j.phi)
             fillBranch(prefix + "DeepFlavB", j.btagDeepFlavB)
             fillBranch(prefix + "PNetB", j.btagPNetB)
+            fillBranch(prefix + "PNetBvsC", j.PNetBvsC)
+            fillBranch(prefix + "PNetBCvsL", j.PNetBCvsL)
+            fillBranch(prefix + "PNetCat", j.PNetCat)
             fillBranch(prefix + "JetId", j.jetId)
             fillBranch(prefix + "PuId", j.puId)
             fillBranch(prefix + "Mass", j.mass)
@@ -2363,7 +2696,10 @@ class hhh6bProducerPNetAK4(Module):
                     lep.IfHiggsTau = 1
             fillBranch(prefix + "IfHiggsTau", lep.IfHiggsTau)
             fillBranch(prefix + "kind", lep.kind)
-        
+            fillBranch(prefix + "miniPFRelIso_all", lep.miniPFRelIso_all)
+            fillBranch(prefix + "passAnalysisId", lep.passAnalysisId)
+            fillBranch(prefix + "passAnalysisWP", lep.passAnalysisWP)
+
     def fillTauInfo(self, event, leptons):
         for idx in ([1, 2, 3, 4]):
             lep = leptons[idx-1]if len(leptons)>idx-1 else _NullObject()
@@ -2382,12 +2718,16 @@ class hhh6bProducerPNetAK4(Module):
             fillBranch(prefix + "rawDeepTau2017v2p1VSmu", lep.rawDeepTau2017v2p1VSmu)
             fillBranch(prefix + "rawDeepTau2017v2p1VSjet", lep.rawDeepTau2017v2p1VSjet)
             fillBranch(prefix + "idDeepTau2017v2p1VSjet", lep.idDeepTau2017v2p1VSjet)
+            fillBranch(prefix + "idDeepTau2017v2p1VSe", lep.idDeepTau2017v2p1VSe)
+            fillBranch(prefix + "idDeepTau2017v2p1VSmu", lep.idDeepTau2017v2p1VSmu)
+            fillBranch(prefix + "jetPt", lep.jetPt)
+            fillBranch(prefix + "jetEta", lep.jetEta)
             lep.IfHiggsTau = 0
             if self.isMC and not isinstance(lep, _NullObject) and self.genTaulistFromHiggs:
                 if any(deltaR(lep, item) < 0.4 for item in self.genTaulistFromHiggs):
                     lep.IfHiggsTau = 1
             fillBranch(prefix + "IfHiggsTau", lep.IfHiggsTau)
-        fillBranch("ntau", self.nTaus)
+
 
     def fillLepPairInfo(self, event, Leptons, kind_category, Taus):
         loosetaus_4vec = [polarP4(t) for t in Taus]
@@ -2401,7 +2741,7 @@ class hhh6bProducerPNetAK4(Module):
         covMET[1][0] = METvars[3]
         covMET[0][1] = METvars[3]
         covMET[1][1] = METvars[4]
-        if kind_category in [0, 1]:
+        if kind_category in [0, 1, 3]:
             if kind_category == 0:
                 t1 = loosetaus_4vec[0]
                 t2 = loosetaus_4vec[1]
@@ -2412,6 +2752,11 @@ class hhh6bProducerPNetAK4(Module):
                 t2 = looseLeps_4vec[0]
                 tau1_tmp = Taus[0]
                 tau2_tmp = Leptons[0]
+            if kind_category == 3:
+                t1 = looseLeps_4vec[0]
+                t2 = looseLeps_4vec[1]
+                tau1_tmp = Leptons[0]
+                tau2_tmp = Leptons[1]
             HiggsTauMatchStatus = tau1_tmp.IfHiggsTau + tau2_tmp.IfHiggsTau
             tau1 = ROOT.MeasuredTauLepton(tau1_tmp.kind, t1.Pt(), t1.Eta(), t1.Phi(), t1.M(), tau1_tmp.decayMode)
             tau2 = ROOT.MeasuredTauLepton(tau2_tmp.kind, t2.Pt(), t2.Eta(), t2.Phi(), t2.M(), tau2_tmp.decayMode)
@@ -2449,6 +2794,9 @@ class hhh6bProducerPNetAK4(Module):
         dummyJet.FatJetMatch = False
         dummyJet.btagDeepFlavB = -1
         dummyJet.btagPNetB = -1
+        dummyJet.PNetBvsC = 0.
+        dummyJet.PNetBCvsL = 0.
+        dummyJet.PNetCat = 0
         dummyJet.hadronFlavour = -1
         dummyJet.jetId = -1
         dummyJet.puId = -1
@@ -2743,7 +3091,106 @@ class hhh6bProducerPNetAK4(Module):
             numberOfObjects = len([el for el in trigobjHT if el.filterBits & (1 << triggerFiltersHT[key])])
             self.out.fillBranch(name,numberOfObjects)
 
-    
+    def _hlt_fired(self, event, hlt_names):
+        """Check if any of the HLT paths in the list fired. Returns True if at least one fired."""
+        for name in hlt_names:
+            try:
+                if getattr(event, name, 0) != 0:
+                    return True
+            except RuntimeError:
+                pass
+        return False
+
+    def determineTriggerPath(self, event, kind_category):
+        """Determine which trigger path the event is assigned to.
+
+        Returns (trigger_path, pass_dict) where:
+          trigger_path: 0=none, 1=JetHT, 2=SingleTau, 3=DoubleTau, 4=SingleLep, 5=CrossTrig
+          pass_dict: dict of booleans for each path
+
+        Priority by channel:
+          Hadronic (kind 0, 2): JetHT -> SingleTau -> DoubleTau
+          Leptonic (kind 1, 3): SingleLep -> CrossTrig -> JetHT
+        """
+        year_str = str(self.year)
+
+        # --- Evaluate each path (HLT + offline) ---
+        # JetHT: HLT fires + nSmallJets>=4 + nBTaggedJets>=3 + 4th jet pT > 50
+        pass_JetHT = False
+        if self._hlt_fired(event, self._trigger_defs['JetHT'].get(year_str, [])):
+            jets_sorted_pt = sorted(event.ak4jets_PTcut30, key=lambda x: x.pt, reverse=True)
+            if len(jets_sorted_pt) >= 4 and jets_sorted_pt[3].pt > 50:
+                pass_JetHT = True
+
+        # SingleTau: HLT fires + nTaus>=1 + leading tau pT > 190 + VSjet >= 16 (Medium)
+        pass_SingleTau = False
+        if self._hlt_fired(event, self._trigger_defs['SingleTau'].get(year_str, [])):
+            if self.nTaus >= 1:
+                lead_tau = event.looseTaus[0]
+                if lead_tau.pt > 190 and lead_tau.idDeepTau2017v2p1VSjet >= 16:
+                    pass_SingleTau = True
+
+        # DoubleTau: HLT fires + nTaus>=2 + both taus Medium VSjet + sub-leading pT > 38
+        pass_DoubleTau = False
+        if self._hlt_fired(event, self._trigger_defs['DoubleTau'].get(year_str, [])):
+            if self.nTaus >= 2:
+                tau1 = event.looseTaus[0]
+                tau2 = event.looseTaus[1]
+                if (tau1.idDeepTau2017v2p1VSjet >= 16 and
+                    tau2.idDeepTau2017v2p1VSjet >= 16 and
+                    tau2.pt > 38):
+                    pass_DoubleTau = True
+
+        # SingleLep: SingleMu (IsoMu27) fires + muon pT > 29, OR SingleEle fires + ele pT > 35
+        pass_SingleLep = False
+        if self._hlt_fired(event, self._trigger_defs['SingleMu'].get(year_str, [])):
+            for lep in event.looseLeptons:
+                if abs(lep.Id) == 13 and lep.pt > 29:  # IsoMu27 threshold
+                    pass_SingleLep = True
+                    break
+        if not pass_SingleLep and self._hlt_fired(event, self._trigger_defs['SingleEle'].get(year_str, [])):
+            for lep in event.looseLeptons:
+                if abs(lep.Id) == 11 and lep.pt > 35:
+                    pass_SingleLep = True
+                    break
+
+        # CrossTrig: CrossEleTau only (CrossMuTau removed - no MuonPOG SF available for mu-tau cross trigger)
+        pass_CrossTrig = False
+        if self._hlt_fired(event, self._trigger_defs['CrossEleTau'].get(year_str, [])):
+            has_ele = any(abs(lep.Id) == 11 and lep.pt > 26 and lep.miniPFRelIso_all < 0.15 for lep in event.looseLeptons)
+            has_tau = self.nTaus >= 1 and event.looseTaus[0].pt > 33
+            if has_ele and has_tau:
+                pass_CrossTrig = True
+
+        pass_dict = {
+            'JetHT': pass_JetHT,
+            'SingleTau': pass_SingleTau,
+            'DoubleTau': pass_DoubleTau,
+            'SingleLep': pass_SingleLep,
+            'CrossTrig': pass_CrossTrig,
+        }
+
+        # --- Priority-based path assignment ---
+        trigger_path = 0  # none
+        if kind_category in [0, 2]:
+            # Hadronic: JetHT -> SingleTau -> DoubleTau
+            if pass_JetHT:
+                trigger_path = 1
+            elif pass_SingleTau:
+                trigger_path = 2
+            elif pass_DoubleTau:
+                trigger_path = 3
+        elif kind_category in [1, 3]:
+            # Leptonic: SingleLep -> CrossTrig -> JetHT
+            if pass_SingleLep:
+                trigger_path = 4
+            elif pass_CrossTrig:
+                trigger_path = 5
+            elif pass_JetHT:
+                trigger_path = 1
+
+        return trigger_path, pass_dict
+
     def analyze(self, event):
         """process event, return True (go to next module) or False (fail, go to next event)"""
         
@@ -2781,6 +3228,38 @@ class hhh6bProducerPNetAK4(Module):
 
         # evaluate regression
         self.evalMassRegression(event, probe_jets)
+        # compute kind_category (used by option 92 and filled for all options)
+        if self.nTaus == 2 and self.nLeps == 0:
+            self.kind_category = 0  # 2tau0l
+        elif self.nTaus == 1 and self.nLeps == 1:
+            self.kind_category = 1  # 1tau1l
+        elif self.nTaus == 1 and self.nLeps == 0:
+            self.kind_category = 2  # 1tau0l
+        elif self.nLeps == 2 and self.nTaus == 0:
+            self.kind_category = 3  # 0tau2l
+        elif self.nTaus > 2:
+            self.kind_category = 4  # overflow taus
+        elif self.nLeps > 2:
+            self.kind_category = 5  # overflow leptons
+        else:
+            self.kind_category = 6  # other
+
+        # Compute kind_category at Analysis WP (tighter ID/iso for fake rate method)
+        if self.nTaus_analysis == 2 and self.nLeps_analysis == 0:
+            self.kind_category_analysis = 0  # 2tau0l
+        elif self.nTaus_analysis == 1 and self.nLeps_analysis == 1:
+            self.kind_category_analysis = 1  # 1tau1l
+        elif self.nTaus_analysis == 1 and self.nLeps_analysis == 0:
+            self.kind_category_analysis = 2  # 1tau0l
+        elif self.nLeps_analysis == 2 and self.nTaus_analysis == 0:
+            self.kind_category_analysis = 3  # 0tau2l
+        elif self.nTaus_analysis > 2:
+            self.kind_category_analysis = 4  # overflow taus
+        elif self.nLeps_analysis > 2:
+            self.kind_category_analysis = 5  # overflow leptons
+        else:
+            self.kind_category_analysis = 6  # other
+
         # apply selection
         passSel = False
         if self._opts['option'] == "5":
@@ -2806,37 +3285,64 @@ class hhh6bProducerPNetAK4(Module):
         elif self._opts['option'] == "4":
             if (self.nSmallJets > -1): passSel = True
         elif self._opts['option'] == "92":
-            #if (self.nSmallJets > 5 and self.nBTaggedJets > 2): passSel = True
-            #if event.HLT_PFHT300PT30_QuadPFJet_75_60_45_40_TriplePFBTagCSV_3p0!=0 and self.nTaus>=1:
-            #if self.nTaus>=0 and (event.HLT_PFJet450!=0 or event.HLT_PFJet500!=0 or event.HLT_PFHT1050!=0 or event.HLT_AK8PFJet550!=0 or event.HLT_AK8PFJet360_TrimMass30!=0 or event.HLT_AK8PFJet400_TrimMass30!=0 or event.HLT_AK8PFHT750_TrimMass50!=0 or event.HLT_AK8PFJet330_PFAK8BTagCSV_p17!=0 or event.HLT_PFHT300PT30_QuadPFJet_75_60_45_40_TriplePFBTagCSV_3p0!=0 or event.HLT_PFMET100_PFMHT100_IDTight_CaloBTagCSV_3p1!=0 or event.HLT_PFHT380_SixPFJet32_DoublePFBTagCSV_2p2!=0 or event.HLT_PFHT380_SixPFJet32_DoublePFBTagDeepCSV_2p2!=0 or event.HLT_PFHT430_SixPFJet40_PFBTagCSV_1p5!=0 or event.HLT_QuadPFJet98_83_71_15_DoubleBTagCSV_p013_p08_VBF1!=0 or event.HLT_QuadPFJet98_83_71_15_BTagCSV_p013_VBF2!=0):
-            #if event.HLT_PFHT300PT30_QuadPFJet_75_60_45_40_TriplePFBTagCSV_3p0!=0:
-            #    if (self.nSmallJets >= 2 and nprobejets >= 1 and self.nrawTaus>=1): passSel = True
-            #    elif (self.nSmallJets >= 4 and self.nrawTaus>=1 and self.nBTaggedJets > 2): passSel = True
-            #if event.HLT_PFHT300PT30_QuadPFJet_75_60_45_40_TriplePFBTagCSV_3p0!=0:
-            if (self.nSmallJets >= 4 and self.nBTaggedJets>=3 and self.nTaus >=1 and event.HLT_PFHT300PT30_QuadPFJet_75_60_45_40_TriplePFBTagCSV_3p0!=0): passSel = True
-            #if (self.nSmallJets >= 4 and self.nBTaggedJets>=2): passSel = True
+            # --- Multi-trigger selection for HHH->4b2tau ---
+            # Only keep the 4 main analysis channels (using analysis WP for SR)
+            if self.kind_category_analysis not in [0, 1, 2, 3]:
+                return False
+            # Z veto for 0tau2l: reject OSSF pairs with |m_ll - m_Z| < 10 GeV
+            # Suppresses Drell-Yan and TTZ backgrounds
+            self.mll = 0.0
+            if self.kind_category_analysis == 3 and len(event.looseLeptons) >= 2:
+                lep1 = event.looseLeptons[0]
+                lep2 = event.looseLeptons[1]
+                lep1_p4 = polarP4(lep1)
+                lep2_p4 = polarP4(lep2)
+                self.mll = (lep1_p4 + lep2_p4).M()
+                # OSSF check: lep.Id = charge * (-pdgId), so OSSF ↔ lep1.Id + lep2.Id == 0
+                is_OSSF = (lep1.Id + lep2.Id == 0)
+                if is_OSSF and abs(self.mll - 91.2) < 10:
+                    return False
+            if self.nSmallJets < 4 or self.nBTaggedJets < 3:
+                return False
+            if event.ht < 200:
+                return False
+            # jet3PNetB cut: 3rd-highest PNetB jet must have score > 0.1
+            # (jets already sorted by PNetB descending at line 1556)
+            # S/B improvement: 2.67x with 18% signal loss (see CLAUDE_how_to_remove_ttbar.md)
+            if len(event.ak4jets) < 3 or event.ak4jets[2].btagPNetB <= 0.1:
+                return False
+            # Determine trigger path (priority-based, using analysis WP category)
+            self.trigger_path, self.pass_trig = self.determineTriggerPath(event, self.kind_category_analysis)
+
+            # Require at least one trigger path to fire
+            passSel = (self.trigger_path > 0)
 
         if not passSel: return False
-        
-        if self.nTaus ==2:
-            self.kind_category = 0
-        elif self.nTaus ==1 and self.nLeps==1:
-            self.kind_category = 1
-        elif self.nTaus >=2:
-            self.kind_category = 3
-        elif self.nLeps>=2:
-            self.kind_category = 4
-        elif self.nTaus ==1:
-            self.kind_category = 2
-        elif self.nTaus==0:
-            self.kind_category = 5
-        else:
-            self.kind_category = 6
 
         self.out.fillBranch("kind_category", self.kind_category)
+        self.out.fillBranch("ntaus_analysis", self.nTaus_analysis)
+        self.out.fillBranch("nleps_analysis", self.nLeps_analysis)
+        self.out.fillBranch("kind_category_analysis", self.kind_category_analysis)
+        self.out.fillBranch("mll", getattr(self, 'mll', 0.0))
         self.out.fillBranch("nSmallJets30", self.nSmallJets)
         self.out.fillBranch("nFatJets_rt", nprobejets)
         self.out.fillBranch("nrawTaus_rt", self.nrawTaus)
+
+        # Fill trigger branches (option 92 has real values; others get defaults)
+        if self._opts['option'] == "92":
+            self.out.fillBranch("trigger_path", self.trigger_path)
+            self.out.fillBranch("pass_trig_JetHT", self.pass_trig['JetHT'])
+            self.out.fillBranch("pass_trig_SingleTau", self.pass_trig['SingleTau'])
+            self.out.fillBranch("pass_trig_DoubleTau", self.pass_trig['DoubleTau'])
+            self.out.fillBranch("pass_trig_SingleLep", self.pass_trig['SingleLep'])
+            self.out.fillBranch("pass_trig_CrossTrig", self.pass_trig['CrossTrig'])
+        else:
+            self.out.fillBranch("trigger_path", 0)
+            self.out.fillBranch("pass_trig_JetHT", False)
+            self.out.fillBranch("pass_trig_SingleTau", False)
+            self.out.fillBranch("pass_trig_DoubleTau", False)
+            self.out.fillBranch("pass_trig_SingleLep", False)
+            self.out.fillBranch("pass_trig_CrossTrig", False)
 
         # load gen history
         higgsInfo = self.loadGenHistory(event, probe_jets)
@@ -2923,27 +3429,11 @@ class hhh6bProducerPNetAK4(Module):
         self.fillLeptonInfo(event, event.looseLeptons)
         self.fillTauInfo(event, event.looseTaus)
         #self.reconstructHiggsOnly2Lepton(event, self.kind_category, event.looseTaus, event.looseLeptons)
-        self.fillLepPairInfo(event, event.looseLeptons, event.kind_category,  event.looseTaus)
+        self.fillLepPairInfo(event, event.looseLeptons, self.kind_category_analysis,  event.looseTaus)
 
-        if self.isMC and self.btag_calculator:
-            jets_pt = [j.pt for j in event.ak4jetsUnclean]
-            jets_eta = [j.eta for j in event.ak4jetsUnclean]
-            jets_flavour = [j.hadronFlavour for j in event.ak4jetsUnclean]
-
-            # Use discriminator matching the era (DeepJet for Run2, PNet for Run3)
-            if self.is_run3:
-                jets_btag = [j.btagPNetB for j in event.ak4jetsUnclean]
-            else:
-                jets_btag = [j.btagDeepFlavB for j in event.ak4jetsUnclean]
-
-            w_shape = self.btag_calculator.calc_shape_weight(jets_pt, jets_eta, jets_flavour, jets_btag)
-            w_M = self.btag_calculator.calc_wp_weight(jets_pt, jets_eta, jets_flavour, jets_btag, wp="M")
-
-            self.out.fillBranch("btagWeight_shape", w_shape)
-            self.out.fillBranch("btagWeight_M", w_M)
-        elif self.isMC:
-             self.out.fillBranch("btagWeight_shape", 1.0)
-             self.out.fillBranch("btagWeight_M", 1.0)
+        # Calculate and fill b-tagging weights
+        if self.isMC:
+            self.fillBtagWeight(event, event.ak4jetsUnclean)
 
         #self.fillTriggerFilters(event)
         # for all jme systs
