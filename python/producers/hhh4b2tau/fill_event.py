@@ -35,7 +35,7 @@ import logging
 logger = logging.getLogger('nano')
 configLogger('nano', loglevel=logging.INFO)
 
-from PhysicsTools.NanoNN.producers.hhh6b.kinematics import (
+from PhysicsTools.NanoNN.producers.hhh4b2tau.kinematics import (
     UNDEFINED, transverse_mass, mt_tot, d_zeta, mt2_massless, event_shapes)
 
 
@@ -150,3 +150,88 @@ class EventFillMixin(object):
         def filler(branch, value, default=0):
             self.out.fillBranch(branch, value if obj else default)
         return filler
+
+    def _declare_event_branches(self):
+        """Event-level branches (weights, MET, HT, prefiring, trigger efficiency)."""
+        self.out.branch("weight", "F")
+        #self.out.branch("weightLHEScaleUp", "F")
+        #self.out.branch("weightLHEScaleDown", "F")  
+
+        # event variables
+        self.out.branch("met", "F")
+        self.out.branch("rho", "F")
+        self.out.branch("metphi", "F")
+        # --- MET resolution / alternative MET (v27) ---------------------------
+        # met_significance = MET^T V^-1 MET with V the per-object resolution
+        # covariance matrix; chi2(2 dof) under the "true MET = 0" null hypothesis.
+        # Unlike raw MET it divides out the hadronic-activity-driven resolution,
+        # so it separates real neutrinos from mismeasured QCD at high HT.
+        # The cov elements are also FastMTT's inputs (already read at fillLepPairInfo),
+        # so storing them makes any future FastMTT variant re-derivable offline.
+        self.out.branch("met_significance", "F")
+        self.out.branch("met_covXX", "F")
+        self.out.branch("met_covXY", "F")
+        self.out.branch("met_covYY", "F")
+        self.out.branch("met_sumEt", "F")
+        # PuppiMET: FastMTT uses this internally while met/metphi above are PF
+        # Type-1. Store it so every MET-derived variable can be made consistent.
+        self.out.branch("puppimet", "F")
+        self.out.branch("puppimetphi", "F")
+        #self.out.branch("npvs", "F")
+        self.out.branch("ht", "F")
+        self.out.branch("passmetfilters", "O")
+        self.out.branch("l1PreFiringWeight", "F")
+        self.out.branch("l1PreFiringWeightUp", "F")
+        self.out.branch("l1PreFiringWeightDown", "F")
+        self.out.branch("triggerEffWeight", "F")
+        self.out.branch("triggerEff3DWeight", "F")
+        self.out.branch("triggerEffMCWeight", "F")
+        self.out.branch("triggerEffMC3DWeight", "F")
+
+        if self.isMC:
+             # B-tagging shape SF weights (central + systematics)
+             self.out.branch("btagWeight_shape", "F")
+             # Systematic variations
+             self.out.branch("btagWeight_shape_lf_up", "F")
+             self.out.branch("btagWeight_shape_lf_down", "F")
+             self.out.branch("btagWeight_shape_hf_up", "F")
+             self.out.branch("btagWeight_shape_hf_down", "F")
+             self.out.branch("btagWeight_shape_hfstats1_up", "F")
+             self.out.branch("btagWeight_shape_hfstats1_down", "F")
+             self.out.branch("btagWeight_shape_hfstats2_up", "F")
+             self.out.branch("btagWeight_shape_hfstats2_down", "F")
+             self.out.branch("btagWeight_shape_lfstats1_up", "F")
+             self.out.branch("btagWeight_shape_lfstats1_down", "F")
+             self.out.branch("btagWeight_shape_lfstats2_up", "F")
+             self.out.branch("btagWeight_shape_lfstats2_down", "F")
+             self.out.branch("btagWeight_shape_cferr1_up", "F")
+             self.out.branch("btagWeight_shape_cferr1_down", "F")
+             self.out.branch("btagWeight_shape_cferr2_up", "F")
+             self.out.branch("btagWeight_shape_cferr2_down", "F")
+
+
+    def _declare_counter_branches(self):
+        """Object-count and channel-category branches."""
+        self.out.branch("ntaus", "I")
+        self.out.branch("nleps", "I")
+        self.out.branch("nbtags", "I")
+        self.out.branch("nSmallJets30", 'I')
+        self.out.branch("nFatJets_rt", 'I')
+        self.out.branch("nrawTaus_rt", 'I')
+        self.out.branch("kind_category", 'I')
+        self.out.branch("ntaus_analysis", "I")
+        self.out.branch("nleps_analysis", "I")
+        self.out.branch("kind_category_analysis", 'I')
+        # FR counts (inclusive-of-Tight): Fakeable-WP tau/lepton counts, channel assignment
+        self.out.branch("ntaus_FR", "I")
+        self.out.branch("nleps_FR", "I")
+        self.out.branch("kind_category_FR", 'I')
+        self.out.branch("fr_region", 'I')  # 0=N/A, 1=MR (nb==2, nj>=4), 2=VR (nb==3, nj==3)
+        self.out.branch("is_1tau0l_loose", 'I')  # 1 if event is 1tau0l at loose pool (VSjet>=2)
+        self.out.branch("nMediumLeptons", 'I')   # leptons passing medium WP (mediumId mu / WP90 e) -- tt tag
+        self.out.branch("is_1tau1l_hadronic", 'I')  # 1 = special tt-enriched lepton-tagged hadronic 1tau1l control (option 92)
+        # Option 97: lepton WP counters for hadronic trigger SF validation
+        self.out.branch("nLepton_FR_WP", 'I')   # loose pool: looseId+miniIso<0.4 / WPL+miniIso<0.4
+        self.out.branch("nLepton_AN_WP", 'I')   # analysis: mediumId+miniIso<0.2 / WP90+miniIso<0.1
+        self.out.branch("nLepton_Tight_WP", 'I') # tight: tightId+miniIso<0.15 / WP80+miniIso<0.1
+

@@ -35,7 +35,7 @@ import logging
 logger = logging.getLogger('nano')
 configLogger('nano', loglevel=logging.INFO)
 
-from PhysicsTools.NanoNN.producers.hhh6b.kinematics import (
+from PhysicsTools.NanoNN.producers.hhh4b2tau.kinematics import (
     UNDEFINED, transverse_mass, mt_tot, d_zeta, mt2_massless, event_shapes)
 
 
@@ -232,3 +232,59 @@ class GenHistoryMixin(object):
             self.out.fillBranch("higgs3_eta", 0)
             self.out.fillBranch("higgs3_phi", 0)
         return truth_trco_tau
+
+    def _declare_gen_branches(self):
+        """Gen-level branches."""
+        for idx in ([1, 2, 3]):
+            prefix = 'genHiggs%i'%idx
+            self.out.branch(prefix + "Pt", "F")
+            self.out.branch(prefix + "Eta", "F")
+            self.out.branch(prefix + "Phi", "F")
+
+        # Tau Matching Truth
+        if self.isMC:
+            self.out.branch("higgs3_tau1", "I")
+            self.out.branch("higgs3_tau2", "I")
+            self.out.branch("higgs3_tau_match", "O")
+            self.out.branch("h1_t3_match1", 'I')
+            self.out.branch("h1_t3_match2", 'I')
+            self.out.branch("h2_t3_match1", 'I')
+            self.out.branch("h2_t3_match2", 'I')
+            self.out.branch("bh1_t3_mass",'F')
+            self.out.branch("bh1_t3_pt", 'F')
+            self.out.branch("bh1_t3_eta", 'F')
+            self.out.branch("bh1_t3_phi", 'F')
+            self.out.branch("bh1_t3_fjidx", 'I')
+            self.out.branch("bh1_t3_Matched", 'O')
+            self.out.branch("bh2_t3_mass",'F')
+            self.out.branch("bh2_t3_pt", 'F')
+            self.out.branch("bh2_t3_eta", 'F')
+            self.out.branch("bh2_t3_phi", 'F')
+            self.out.branch("bh2_t3_fjidx", 'I')
+            self.out.branch("bh2_t3_Matched", 'O')
+            self.out.branch("rh1_t3_mass",'F')
+            self.out.branch("rh1_t3_pt", 'F')
+            self.out.branch("rh1_t3_eta", 'F')
+            self.out.branch("rh1_t3_phi", 'F')
+            self.out.branch("rh1_t3_dRjets", 'F')
+            self.out.branch("rh2_t3_mass",'F')
+            self.out.branch("rh2_t3_pt", 'F')
+            self.out.branch("rh2_t3_eta", 'F')
+            self.out.branch("rh2_t3_phi", 'F')
+            self.out.branch("rh2_t3_dRjets", 'F')
+            self.out.branch("rh1_t3_match", 'O')
+            self.out.branch("rh1_t3_match1", 'I')
+            self.out.branch("rh1_t3_match2", 'I')
+            self.out.branch("rh2_t3_match", 'O')
+            self.out.branch("rh2_t3_match1", 'I')
+            self.out.branch("rh2_t3_match2", 'I')
+            self.out.branch("higgs3_tau1", 'I')
+            self.out.branch("higgs3_tau2", 'I')
+            self.out.branch("higgs3_tau_match", 'O')
+            self.out.branch("higgs3_mass", 'F')
+            self.out.branch("bh1_t3_massSD",'F')
+            self.out.branch("bh2_t3_massSD",'F')
+            self.out.branch("higgs3_pt", "F")
+            self.out.branch("higgs3_eta", "F")
+            self.out.branch("higgs3_phi", "F")
+

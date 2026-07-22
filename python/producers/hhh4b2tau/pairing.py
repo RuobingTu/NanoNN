@@ -35,7 +35,7 @@ import logging
 logger = logging.getLogger('nano')
 configLogger('nano', loglevel=logging.INFO)
 
-from PhysicsTools.NanoNN.producers.hhh6b.kinematics import (
+from PhysicsTools.NanoNN.producers.hhh4b2tau.kinematics import (
     UNDEFINED, transverse_mass, mt_tot, d_zeta, mt2_massless, event_shapes)
 
 
@@ -298,3 +298,203 @@ class HiggsPairingMixin(object):
         self.out.fillBranch("rh2_t3_match", matchH2)
         self.out.fillBranch("rh2_t3_match1", higgs2_jetlist[0])
         self.out.fillBranch("rh2_t3_match2", higgs2_jetlist[1])
+
+    def _declare_pairing_branches(self):
+        """Higgs-candidate pairing branches (hh / hhh / h1-h3 / VBF)."""
+        self.out.branch("hh_pt", "F")
+        self.out.branch("hh_eta", "F")
+        self.out.branch("hh_phi", "F")
+        self.out.branch("hh_mass", "F")
+
+        self.out.branch("hh_pt_MassRegressed", "F")
+        self.out.branch("hh_eta_MassRegressed", "F")
+        self.out.branch("hh_phi_MassRegressed", "F")
+        self.out.branch("hh_mass_MassRegressed", "F")
+
+        if self.isMC:
+            self.out.branch("hh_pt_JMR_Down", "F")
+            self.out.branch("hh_pt_JMR_Up", "F")
+            self.out.branch("hh_eta_JMR_Down", "F")
+            self.out.branch("hh_eta_JMR_Up", "F")
+            self.out.branch("hh_mass_JMR_Down", "F")
+            self.out.branch("hh_mass_JMR_Up", "F")
+
+            self.out.branch("hh_pt_JMS_Down", "F")
+            self.out.branch("hh_pt_JMS_Up", "F")
+            self.out.branch("hh_eta_JMS_Down", "F")
+            self.out.branch("hh_eta_JMS_Up", "F")
+            self.out.branch("hh_mass_JMS_Down", "F")
+            self.out.branch("hh_mass_JMS_Up", "F")
+
+            self.out.branch("hh_pt_MassRegressed_JMR_Down", "F")
+            self.out.branch("hh_pt_MassRegressed_JMR_Up", "F")
+            self.out.branch("hh_eta_MassRegressed_JMR_Down", "F")
+            self.out.branch("hh_eta_MassRegressed_JMR_Up", "F")
+            self.out.branch("hh_mass_MassRegressed_JMR_Down", "F")
+            self.out.branch("hh_mass_MassRegressed_JMR_Up", "F")
+
+            self.out.branch("hh_pt_MassRegressed_JMS_Down", "F")
+            self.out.branch("hh_pt_MassRegressed_JMS_Up", "F")
+            self.out.branch("hh_eta_MassRegressed_JMS_Down", "F")
+            self.out.branch("hh_eta_MassRegressed_JMS_Up", "F")
+            self.out.branch("hh_mass_MassRegressed_JMS_Down", "F")
+            self.out.branch("hh_mass_MassRegressed_JMS_Up", "F")
+
+        if self.isMC and self._allJME:
+            for syst in self._jmeLabels:
+                if syst == 'nominal': continue
+                self.out.branch("hh_pt" + "_" +syst, "F")
+                self.out.branch("hh_eta" + "_" +syst, "F")
+                self.out.branch("hh_mass" + "_" + syst, "F")
+                self.out.branch("hh_mass_MassRegressed" + "_" + syst, "F")
+
+        self.out.branch("deltaEta_j1j2", "F")
+        self.out.branch("deltaPhi_j1j2", "F")
+        self.out.branch("deltaR_j1j2", "F")
+        self.out.branch("ptj2_over_ptj1", "F")
+
+        self.out.branch("mj2_over_mj1", "F")
+        self.out.branch("mj2_over_mj1_MassRegressed", "F")
+
+        # tri-higgs variables
+        self.out.branch("hhh_pt", "F")
+        self.out.branch("hhh_eta", "F")
+        self.out.branch("hhh_phi", "F")
+        self.out.branch("hhh_mass", "F")
+
+        self.out.branch("hhh_pt_MassRegressed", "F")
+        self.out.branch("hhh_eta_MassRegressed", "F")
+        self.out.branch("hhh_phi_MassRegressed", "F")
+        self.out.branch("hhh_mass_MassRegressed", "F")
+
+        if self.isMC:
+            self.out.branch("hhh_pt_JMR_Down", "F")
+            self.out.branch("hhh_pt_JMR_Up", "F")
+            self.out.branch("hhh_eta_JMR_Down", "F")
+            self.out.branch("hhh_eta_JMR_Up", "F")
+            self.out.branch("hhh_mass_JMR_Down", "F")
+            self.out.branch("hhh_mass_JMR_Up", "F")
+
+            self.out.branch("hhh_pt_JMS_Down", "F")
+            self.out.branch("hhh_pt_JMS_Up", "F")
+            self.out.branch("hhh_eta_JMS_Down", "F")
+            self.out.branch("hhh_eta_JMS_Up", "F")
+            self.out.branch("hhh_mass_JMS_Down", "F")
+            self.out.branch("hhh_mass_JMS_Up", "F")
+
+            self.out.branch("hhh_pt_MassRegressed_JMR_Down", "F")
+            self.out.branch("hhh_pt_MassRegressed_JMR_Up", "F")
+            self.out.branch("hhh_eta_MassRegressed_JMR_Down", "F")
+            self.out.branch("hhh_eta_MassRegressed_JMR_Up", "F")
+            self.out.branch("hhh_mass_MassRegressed_JMR_Down", "F")
+            self.out.branch("hhh_mass_MassRegressed_JMR_Up", "F")
+
+            self.out.branch("hhh_pt_MassRegressed_JMS_Down", "F")
+            self.out.branch("hhh_pt_MassRegressed_JMS_Up", "F")
+            self.out.branch("hhh_eta_MassRegressed_JMS_Down", "F")
+            self.out.branch("hhh_eta_MassRegressed_JMS_Up", "F")
+            self.out.branch("hhh_mass_MassRegressed_JMS_Down", "F")
+            self.out.branch("hhh_mass_MassRegressed_JMS_Up", "F")
+
+        # tri-higgs resolved variables
+        self.out.branch("h1_pt", "F")
+        self.out.branch("h1_eta", "F")
+        self.out.branch("h1_phi", "F")
+        self.out.branch("h1_mass", "F")
+
+        self.out.branch("h2_pt", "F")
+        self.out.branch("h2_eta", "F")
+        self.out.branch("h2_phi", "F")
+        self.out.branch("h2_mass", "F")
+
+        self.out.branch("h3_pt", "F")
+        self.out.branch("h3_eta", "F")
+        self.out.branch("h3_phi", "F")
+        self.out.branch("h3_mass", "F")
+
+        self.out.branch("h1_t2_pt", "F")
+        self.out.branch("h1_t2_eta", "F")
+        self.out.branch("h1_t2_phi", "F")
+        self.out.branch("h1_t2_mass", "F")
+
+        self.out.branch("h2_t2_pt", "F")
+        self.out.branch("h2_t2_eta", "F")
+        self.out.branch("h2_t2_phi", "F")
+        self.out.branch("h2_t2_mass", "F")
+
+        self.out.branch("h3_t2_pt", "F")
+        self.out.branch("h3_t2_eta", "F")
+        self.out.branch("h3_t2_phi", "F")
+        self.out.branch("h3_t2_mass", "F")
+
+        self.out.branch("h1_t3_pt", "F")
+        self.out.branch("h1_t3_eta", "F")
+        self.out.branch("h1_t3_phi", "F")
+        self.out.branch("h1_t3_mass", "F")
+        self.out.branch("h1_t3_match", "O")
+        self.out.branch("h1_t3_dRjets", "F")
+
+        self.out.branch("h2_t3_pt", "F")
+        self.out.branch("h2_t3_eta", "F")
+        self.out.branch("h2_t3_phi", "F")
+        self.out.branch("h2_t3_mass", "F")
+        self.out.branch("h2_t3_match", "O")
+        self.out.branch("h2_t3_dRjets", "F")
+
+        self.out.branch("h3_t3_pt", "F")
+        self.out.branch("h3_t3_eta", "F")
+        self.out.branch("h3_t3_phi", "F")
+        self.out.branch("h3_t3_mass", "F")
+        self.out.branch("h3_t3_match", "O")
+        self.out.branch("h3_t3_dRjets", "F")
+
+        self.out.branch("h_fit_mass", "F")
+
+        # max min
+
+
+        self.out.branch("hhh_resolved_mass", "F")
+        self.out.branch("hhh_resolved_pt", "F")
+
+        # Dalitz variables
+        self.out.branch("h1h2_mass_squared", "F")
+        self.out.branch("h2h3_mass_squared", "F")
+
+
+
+        if self.isMC and self._allJME:
+            for syst in self._jmeLabels:
+                if syst == 'nominal': continue
+                self.out.branch("hhh_pt" + "_" +syst, "F")
+                self.out.branch("hhh_eta" + "_" +syst, "F")
+                self.out.branch("hhh_mass" + "_" + syst, "F")
+                self.out.branch("hhh_mass_MassRegressed" + "_" + syst, "F")
+
+        self.out.branch("deltaEta_j1j3", "F")
+        self.out.branch("deltaPhi_j1j3", "F")
+        self.out.branch("deltaR_j1j3", "F")
+        self.out.branch("ptj3_over_ptj1", "F")
+
+        self.out.branch("mj3_over_mj1", "F")
+        self.out.branch("mj3_over_mj1_MassRegressed", "F")
+
+        self.out.branch("deltaEta_j2j3", "F")
+        self.out.branch("deltaPhi_j2j3", "F")
+        self.out.branch("deltaR_j2j3", "F")
+        self.out.branch("ptj3_over_ptj2", "F")
+
+        self.out.branch("mj3_over_mj2", "F")
+        self.out.branch("mj3_over_mj2_MassRegressed", "F")
+
+        # resolved tag: nBTaggedJets == 4
+
+        # for phase-space overlap removal with VBFHH->4b boosted analysis
+        # small jets
+        self.out.branch("isVBFtag", "I")
+        if self._allJME:
+            for syst in self._jmeLabels:
+                if syst == 'nominal': continue
+                self.out.branch("isVBFtag" + "_" + syst, "F")
+
+        self.out.branch("dijetmass", "F")
+

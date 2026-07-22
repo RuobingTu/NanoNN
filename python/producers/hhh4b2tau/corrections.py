@@ -35,8 +35,8 @@ import logging
 logger = logging.getLogger('nano')
 configLogger('nano', loglevel=logging.INFO)
 
-from PhysicsTools.NanoNN.producers.hhh6b.common import METObject
-from PhysicsTools.NanoNN.producers.hhh6b.kinematics import (
+from PhysicsTools.NanoNN.producers.hhh4b2tau.common import METObject
+from PhysicsTools.NanoNN.producers.hhh4b2tau.kinematics import (
     UNDEFINED, transverse_mass, mt_tot, d_zeta, mt2_massless, event_shapes)
 
 
@@ -606,3 +606,57 @@ class CorrectionsMixin(object):
         sf1m = taus[0].tauIdSF_medium if len(taus) >= 1 else 1.0
         sf2m = taus[1].tauIdSF_medium if len(taus) >= 2 else 1.0
         self.out.fillBranch("tauIDSF_weight_medium", sf1m * sf2m)
+
+    def _declare_sf_branches(self):
+        """Per-object scale-factor branches (electron, muon, tau)."""
+        for idx in ([1, 2, 3]):
+            prefix = 'lep%i'%idx
+            self.out.branch(prefix + "Pt", "F")
+            self.out.branch(prefix + "Eta", "F")
+            self.out.branch(prefix + "Phi", "F")
+            self.out.branch(prefix + "Id", "I")
+            self.out.branch(prefix + "kind", "I")
+            self.out.branch(prefix + "IfHiggsTau", "I")
+            self.out.branch(prefix + "genPartFlav", "I")
+            self.out.branch(prefix + "miniPFRelIso_all", "F")
+            self.out.branch(prefix + "mvaTTH", "F")            # ttH multilepton MVA score
+            self.out.branch(prefix + "passAnalysisId", "O")    # WP90 for e, mediumId for mu
+            self.out.branch(prefix + "passFakeableWP", "O")    # Fakeable WP (FR denominator)
+            self.out.branch(prefix + "passAnalysisWP", "O")    # Tight WP (= Fakeable + mvaTTH)
+            self.out.branch(prefix + "Mt", "F")                # transverse mass MT(lep, MET) for SPANet (precomputed to speed up h5 conversion)
+
+        # Electron ID SF branches (RecoSF × WP90 IdSF combined, per-object: Ele1, Ele2)
+        for idx in [1, 2]:
+            prefix = 'Ele%i' % idx
+            self.out.branch(prefix + "IdSF", "F")
+            self.out.branch(prefix + "IdSF_up", "F")
+            self.out.branch(prefix + "IdSF_down", "F")
+
+        # Muon ID SF branches (per-object: Muon1, Muon2)
+        for idx in [1, 2]:
+            prefix = 'Muon%i' % idx
+            self.out.branch(prefix + "IdSF", "F")
+            self.out.branch(prefix + "IdSF_up", "F")
+            self.out.branch(prefix + "IdSF_down", "F")
+
+        # Tau ID SF branches (per-object: Tau1, Tau2; combined: tauIDSF_weight)
+        # Two VSjet WP variants stored side-by-side so the final Medium-vs-Loose SR
+        # comparison needs no re-derivation: default branches use the Medium VSjet WP
+        # (matches the v25/v26 SR); the parallel "_loose" branches use the Loose VSjet WP.
+        # VSmu(VLoose)/VSe(VVLoose) are WP-independent, so only the VSjet SF differs.
+        for idx in [1, 2]:
+            prefix = 'Tau%iIdSF' % idx
+            self.out.branch(prefix, "F")
+            self.out.branch(prefix + "_vsjet_up", "F")
+            self.out.branch(prefix + "_vsjet_down", "F")
+            self.out.branch(prefix + "_vsmu_up", "F")
+            self.out.branch(prefix + "_vsmu_down", "F")
+            self.out.branch(prefix + "_vsele_up", "F")
+            self.out.branch(prefix + "_vsele_down", "F")
+            # Loose-VSjet-WP variant (VSmu/VSe shared with the Medium set)
+            self.out.branch(prefix + "_medium", "F")
+            self.out.branch(prefix + "_medium_vsjet_up", "F")
+            self.out.branch(prefix + "_medium_vsjet_down", "F")
+        self.out.branch("tauIDSF_weight", "F")
+        self.out.branch("tauIDSF_weight_medium", "F")
+

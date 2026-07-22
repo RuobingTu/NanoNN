@@ -35,8 +35,8 @@ import logging
 logger = logging.getLogger('nano')
 configLogger('nano', loglevel=logging.INFO)
 
-from PhysicsTools.NanoNN.producers.hhh6b.common import _NullObject
-from PhysicsTools.NanoNN.producers.hhh6b.kinematics import (
+from PhysicsTools.NanoNN.producers.hhh4b2tau.common import _NullObject
+from PhysicsTools.NanoNN.producers.hhh4b2tau.kinematics import (
     UNDEFINED, transverse_mass, mt_tot, d_zeta, mt2_massless, event_shapes)
 
 
@@ -204,3 +204,86 @@ class LeptonFillMixin(object):
             self.out.fillBranch("pzeta_miss", UNDEFINED)
             self.out.fillBranch("mt_tot", UNDEFINED)
             self.out.fillBranch("mt2_ll", UNDEFINED)
+
+    def _declare_lepton_branches(self):
+        """Lepton and tau branches."""
+        self.out.branch("mll", "F")  # dilepton invariant mass (0tau2l channel)
+
+        for idx in ([1, 2, 3, 4]):
+            prefix = 'tau%i'%idx
+            self.out.branch(prefix + "Charge", "I")
+            self.out.branch(prefix + "Pt", "F")
+            self.out.branch(prefix + "Eta", "F")
+            self.out.branch(prefix + "Phi", "F")
+            self.out.branch(prefix + "Mass", "F")
+            self.out.branch(prefix + "Id", "I")
+            self.out.branch(prefix + "kind", "I")
+            self.out.branch(prefix + "decayMode", "F")
+            self.out.branch(prefix + "IfHiggsTau", "I")
+            self.out.branch(prefix + "genPartFlav", "I")
+
+            self.out.branch(prefix + "rawDeepTau2017v2p1VSe", "F")
+            self.out.branch(prefix + "rawDeepTau2017v2p1VSjet", "F")
+            self.out.branch(prefix + "rawDeepTau2017v2p1VSmu", "F")
+            self.out.branch(prefix + "idDeepTau2017v2p1VSjet", "I")
+            self.out.branch(prefix + "idDeepTau2017v2p1VSe", "I")
+            self.out.branch(prefix + "idDeepTau2017v2p1VSmu", "I")
+            self.out.branch(prefix + "jetPt", "F")   # mother jet pT for fake rate measurement
+            self.out.branch(prefix + "jetEta", "F")   # mother jet eta for fake rate measurement
+            self.out.branch(prefix + "jetHadronFlavour", "I")  # mother jet hadronFlavour (5=b,4=c,0=udsg); -1 if no jet / data
+            self.out.branch(prefix + "jetPartonFlavour", "I")  # mother jet partonFlavour (q/g handle); -1 if no jet / data
+            self.out.branch(prefix + "jetDeepFlavB", "F")      # mother jet DeepFlavB (data-available b-ness of faking jet); -1 if no jet
+            self.out.branch(prefix + "jetQGL", "F")            # mother jet quark-gluon likelihood (data-available q/g handle); -1 if no jet/undef
+            # Transverse mass against MET, same convention as lep{i}Mt:
+            #   mT = sqrt(2 pT_tau MET (1 - cos dphi))
+            # Jacobian endpoint at m_W for W->tau nu and tt->tau nu; signal taus from
+            # H->tautau are collinear with their neutrinos and sit at small mT.
+            # 0 for empty tau slots. This is the only tau-vs-MET angular variable
+            # available in the 1tau0l channel (Dzeta/mT_tot/FastMTT need two legs).
+            self.out.branch(prefix + "Mt", "F")
+
+
+    def _declare_taupair_branches(self):
+        """Tau-pair / FastMTT / v27 MET-projection branches."""
+        self.out.branch("higgs3_mass_manu", "F")
+        self.out.branch("higgs3TauMatchStatus", "I")
+        self.out.branch("higgs3_pt_manu", "F")
+        self.out.branch("higgs3_eta_manu", "F")
+        self.out.branch("higgs3_phi_manu", "F")
+        self.out.branch("deltaPhi_taupair_MET", "F")
+        # v27: sin/cos of the same angle, following the convention already used for
+        # every other phi in the chain (Jets/FJets/Taus/Lep/MET all reach SPANet as
+        # sin_phi/cos_phi). These are the values that should be fed to the network.
+        #
+        # Why this matters here: up to v26 deltaPhi_taupair_MET was a bare
+        # subtraction spanning [-2pi, 2pi], i.e. an angle with an artificial
+        # discontinuity at +-pi -- and it went into SPANet directly. sin/cos are
+        # 2pi-periodic, so they are IDENTICAL whether or not the angle is wrapped:
+        # switching the network input to them removes the discontinuity AND makes
+        # the v26 -> v27 change invisible to training. The scalar branch itself is
+        # now wrapped to [-pi, pi] so it is a well-defined angle for plotting/cuts.
+        self.out.branch("deltaPhi_taupair_MET_sin", "F")
+        self.out.branch("deltaPhi_taupair_MET_cos", "F")
+        self.out.branch("deltaR_taupair", "F")
+
+        # ---- v27: MET angular projections for the two-visible-leg channels -------
+        # Filled only for kind_category in {0,1,3} (2tau0l / 1tau1l / 0tau2l), i.e.
+        # wherever a genuine two-leg system exists. 1tau0l (kc==2) has a single
+        # visible leg, so all of these are geometrically undefined -> sentinel -999.
+        #
+        # Dzeta = pzeta_miss - 0.85*pzeta_vis, projected on the BISECTOR of the two
+        # legs' transverse UNIT vectors. H/Z->tautau put MET inside the opening angle
+        # (neutrinos collinear with the visible decay products) -> large positive;
+        # ttbar neutrinos come from W decay, uncorrelated with the legs -> often
+        # negative. pzeta_vis/pzeta_miss stored separately so the 0.85 coefficient
+        # can be re-tuned offline without a re-skim.
+        self.out.branch("dzeta", "F")
+        self.out.branch("pzeta_vis", "F")
+        self.out.branch("pzeta_miss", "F")
+        # mT_tot = sqrt(mT^2(l1,MET) + mT^2(l2,MET) + mT^2(l1,l2)) -- the standard
+        # H->tautau total transverse mass.
+        self.out.branch("mt_tot", "F")
+        # MT2 of the two visible legs with massless invisibles (Lester bisection).
+        # Endpoint at m_W for ttbar dilepton / WW (each chain is W -> visible + nu).
+        self.out.branch("mt2_ll", "F")
+

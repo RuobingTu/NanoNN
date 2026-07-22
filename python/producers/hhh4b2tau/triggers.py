@@ -35,8 +35,8 @@ import logging
 logger = logging.getLogger('nano')
 configLogger('nano', loglevel=logging.INFO)
 
-from PhysicsTools.NanoNN.producers.hhh6b.common import _event_passes_ele32_emulation
-from PhysicsTools.NanoNN.producers.hhh6b.kinematics import (
+from PhysicsTools.NanoNN.producers.hhh4b2tau.common import _event_passes_ele32_emulation
+from PhysicsTools.NanoNN.producers.hhh4b2tau.kinematics import (
     UNDEFINED, transverse_mass, mt_tot, d_zeta, mt2_massless, event_shapes)
 
 
@@ -290,3 +290,36 @@ class TriggerMixin(object):
                 trigger_path = 4
 
         return trigger_path, pass_dict
+
+    def _declare_trigger_branches(self):
+        """Trigger-path and trigger-SF skim branches."""
+        self.out.branch("trigger_path", "I")  # 0=none, 1=JetHT, 2=SingleTau, 3=DoubleTau, 4=SingleLep, 5=CrossTrig
+        self.out.branch("pass_trig_JetHT", "O")
+        self.out.branch("pass_trig_SingleTau", "O")
+        self.out.branch("pass_trig_DoubleTau", "O")
+        self.out.branch("pass_trig_SingleLep", "O")
+        self.out.branch("pass_trig_CrossTrig", "O")    # OR of CrossEleTau and CrossMuTau
+        self.out.branch("pass_trig_CrossEleTau", "O")  # for cross-trig SF (ele+tau legs)
+        self.out.branch("pass_trig_CrossMuTau", "O")   # for cross-trig SF (mu+tau legs)
+        self.out.branch("pass_trig_SingleMu", "O")
+
+        # pT-sorted jet pT branches (needed for trigger SF application)
+        if self._opts['option'] in ("92", "93", "94", "95", "97", "98"):
+            for idx in range(1, 11):
+                self.out.branch("jet%iPt_ptsorted" % idx, "F")
+
+        # Trigger SF lookup variables (4b AN-style jet selection, independent of main analysis)
+        # Used by downstream framework to compute per-filter factorized trigger SF.
+        # 4b-style: pT>25, |eta|<2.4, jetId>=2, DeepFlavB>=0, puId medium, jetIdx cleaning.
+        if self._opts['option'] in ("92", "93", "94", "95", "97"):
+            # 4 highest-DeepFlavB jets (4b selection), re-sorted by pT
+            for idx in range(1, 5):
+                prefix = 'trigSF_bcand%i' % idx
+                self.out.branch(prefix + "Pt", "F")
+                self.out.branch(prefix + "DeepFlavB", "F")
+            # HT definitions (4b AN: pT>=30, |eta|<2.5, jetIdx muon cleaning)
+            self.out.branch("trigSF_caloHT", "F")   # excl muon-matched jets (= 4b caloJetSum)
+            self.out.branch("trigSF_pfHT", "F")      # incl muon-matched jets (= 4b pfJetSum)
+            # Number of jets passing 4b selection (to flag events with <4)
+            self.out.branch("trigSF_nJets4b", "I")
+

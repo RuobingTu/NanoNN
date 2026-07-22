@@ -35,8 +35,8 @@ import logging
 logger = logging.getLogger('nano')
 configLogger('nano', loglevel=logging.INFO)
 
-from PhysicsTools.NanoNN.producers.hhh6b.common import _NullObject
-from PhysicsTools.NanoNN.producers.hhh6b.kinematics import (
+from PhysicsTools.NanoNN.producers.hhh4b2tau.common import _NullObject
+from PhysicsTools.NanoNN.producers.hhh4b2tau.kinematics import (
     UNDEFINED, transverse_mass, mt_tot, d_zeta, mt2_massless, event_shapes)
 
 
@@ -834,3 +834,194 @@ class JetFillMixin(object):
                 isVBFtag = 0
                 if((Jet1+Jet2).M() > 500. and abs(Jet1.Eta() - Jet2.Eta()) > 4): isVBFtag = 1
             self.out.fillBranch('isVBFtag' + "_" + syst, isVBFtag)
+
+    def _declare_fatjet_branches(self):
+        """AK8 fat-jet branches."""
+        self.out.branch("nfatjets","I")
+        self.out.branch("nprobejets","I")
+        self.out.branch("nHiggsMatchedJets","I")
+
+        #for idx in ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]):
+        for idx in ([1, 2, 3, 4]):
+
+            prefix = 'fatJet%i' % idx
+            self.out.branch(prefix + "Pt", "F")
+            self.out.branch(prefix + "MatchedGenPt", "F")
+            self.out.branch(prefix + "Eta", "F")
+            self.out.branch(prefix + "Phi", "F")
+            self.out.branch(prefix + "RawFactor", "F")
+            self.out.branch(prefix + "Mass", "F")
+            self.out.branch(prefix + "MassSD", "F")
+            self.out.branch(prefix + "MassSD_noJMS", "F")
+            self.out.branch(prefix + "MassSD_UnCorrected", "F")
+            self.out.branch(prefix + "MassRegressed", "F")
+            self.out.branch(prefix + "MassRegressed_UnCorrected", "F")
+            self.out.branch(prefix + "PNetXbb", "F")
+            self.out.branch(prefix + "PNetXjj", "F")
+            self.out.branch(prefix + "PNetQCD", "F")
+            self.out.branch(prefix + "Area", "F")
+            #self.out.branch(prefix + "PNetQCDb", "F")
+            #self.out.branch(prefix + "PNetQCDbb", "F")
+            #self.out.branch(prefix + "PNetQCDc", "F")
+            #self.out.branch(prefix + "PNetQCDcc", "F")
+            #self.out.branch(prefix + "PNetQCDothers", "F")
+            self.out.branch(prefix + "Tau3OverTau2", "F")
+            self.out.branch(prefix + "GenMatchIndex", "I")
+            self.out.branch(prefix + "HiggsMatchedIndex", "I")
+            self.out.branch(prefix + "HiggsMatched", "O")
+            self.out.branch(prefix + "HasMuon", "O")
+            self.out.branch(prefix + "HasElectron", "O")
+            self.out.branch(prefix + "HasBJetCSVLoose", "O")
+            self.out.branch(prefix + "HasBJetCSVMedium", "O")
+            self.out.branch(prefix + "HasBJetCSVTight", "O")
+            self.out.branch(prefix + "OppositeHemisphereHasBJet", "O")
+            self.out.branch(prefix + "NSubJets", "I")
+
+            # here we form the MHH system w. mass regressed
+            self.out.branch(prefix + "PtOverMHH", "F")
+            self.out.branch(prefix + "PtOverMHH_MassRegressed", "F")
+            self.out.branch(prefix + "PtOverMSD", "F")
+            self.out.branch(prefix + "PtOverMRegressed", "F")
+
+            # uncertainties
+            if self.isMC:
+                self.out.branch(prefix + "MassSD_JMS_Down", "F")
+                self.out.branch(prefix + "MassSD_JMS_Up", "F")
+                self.out.branch(prefix + "MassSD_JMR_Down", "F")
+                self.out.branch(prefix + "MassSD_JMR_Up", "F")
+                self.out.branch(prefix + "MassRegressed_JMS_Down", "F")
+                self.out.branch(prefix + "MassRegressed_JMS_Up", "F")
+                self.out.branch(prefix + "MassRegressed_JMR_Down", "F")
+                self.out.branch(prefix + "MassRegressed_JMR_Up", "F")
+
+                self.out.branch(prefix + "PtOverMHH_JMS_Down", "F")
+                self.out.branch(prefix + "PtOverMHH_JMS_Up", "F")
+                self.out.branch(prefix + "PtOverMHH_JMR_Down", "F")
+                self.out.branch(prefix + "PtOverMHH_JMR_Up", "F")
+
+                self.out.branch(prefix + "PtOverMHH_MassRegressed_JMS_Down", "F")
+                self.out.branch(prefix + "PtOverMHH_MassRegressed_JMS_Up", "F")
+                self.out.branch(prefix + "PtOverMHH_MassRegressed_JMR_Down", "F")
+                self.out.branch(prefix + "PtOverMHH_MassRegressed_JMR_Up", "F")
+
+                if self._allJME:
+                    for syst in self._jmeLabels:
+                        if syst == 'nominal': continue
+                        self.out.branch(prefix + "Pt" + "_" + syst, "F")
+                        self.out.branch(prefix + "PtOverMHH" + "_" + syst, "F")
+
+
+    def _declare_jetlevel_branches(self):
+        """Jet-multiplicity, top/W tagger, MT2(b,b) and event-shape branches."""
+        for idx in ([1, 2]):
+            prefix = 'vbfjet%i'%idx
+            self.out.branch(prefix + "Pt", "F")
+            self.out.branch(prefix + "Eta", "F")
+            self.out.branch(prefix + "Phi", "F")
+            self.out.branch(prefix + "Mass", "F")
+            
+            prefix = 'vbffatJet%i'%idx
+            self.out.branch(prefix + "Pt", "F")
+            self.out.branch(prefix + "Eta", "F")
+            self.out.branch(prefix + "Phi", "F")
+            self.out.branch(prefix + "PNetXbb", "F")
+            
+        # more small jets
+        self.out.branch("nsmalljets", "I")
+        # hadronic top / W candidate masses (best |m-173| / |m-80.4| from AK4 jets);
+        # used to anti-top-tag for the QCD-enriched fake-tau region. -1 = no candidate.
+        self.out.branch("hadTopMass", "F")
+        self.out.branch("hadWMass", "F")
+        # --- v27: MT2 of the two most b-like AK4 jets, massless invisibles -------
+        # Available in every channel including the lepton-vetoed 1tau0l, where the
+        # two-leg Dzeta/mT_tot/MT2 above do not exist. NOTE: this is NOT an m_top
+        # endpoint variable here -- see mt2_massless() -- it is a bounded
+        # MET-vs-b-jet angular discriminant. -999 if fewer than two jets.
+        self.out.branch("mt2_bb", "F")
+        # --- v27: event shapes from the sphericity tensor ------------------------
+        # Objects = cleaned AK4 jets + analysis taus + analysis leptons, lab frame.
+        # Both tensor conventions are stored (quadratic: sphericity/aplanarity/
+        # planarity; linearised, infrared safe: sphericity_lin/shapeC/shapeD) so the
+        # choice can be made at training time without a re-skim. -999 if <2 objects.
+        self.out.branch("sphericity", "F")
+        self.out.branch("aplanarity", "F")
+        self.out.branch("planarity", "F")
+        self.out.branch("sphericity_lin", "F")
+        self.out.branch("shapeC", "F")
+        self.out.branch("shapeD", "F")
+        # --- v27 diagnostics: ht/nbtags/nsmalljets as they WOULD have been with the
+        # v26 Medium-WP tau cleaning. Lets the size of the Loose-WP cleaning switch
+        # be measured on v27 output alone. Diagnostic only -- do not use for physics.
+        self.out.branch("ht_medclean", "F")
+        self.out.branch("nbtags_medclean", "I")
+        self.out.branch("nsmalljets_medclean", "I")
+
+
+    def _declare_jet_branches(self):
+        """AK4 jet, jet-pair and b-candidate branches."""
+        for idx in ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]):
+            prefix = 'jet%i'%idx
+            self.out.branch(prefix + "Pt", "F")
+            self.out.branch(prefix + "Eta", "F")
+            self.out.branch(prefix + "Phi", "F")
+            self.out.branch(prefix + "DeepFlavB", "F")
+            # [AK4 PNet removed] No longer saving PNet scores for AK4 jets
+            #self.out.branch(prefix + "PNetB", "F")
+            #self.out.branch(prefix + "PNetBvsC", "F")
+            #self.out.branch(prefix + "PNetBCvsL", "F")
+            #self.out.branch(prefix + "PNetCat", "I")
+            self.out.branch(prefix + "Mass", "F")
+            self.out.branch(prefix + "RawFactor", "F")
+            self.out.branch(prefix + "MatchedGenPt", "F")
+            self.out.branch(prefix + "bRegCorr", "F")
+            self.out.branch(prefix + "bRegRes", "F")
+            self.out.branch(prefix + "cRegCorr", "F")
+            self.out.branch(prefix + "cRegRes", "F")
+            self.out.branch(prefix + "Area", "F")
+
+            self.out.branch(prefix + "HasMuon", "O")
+            self.out.branch(prefix + "HasElectron", "O")
+            self.out.branch(prefix + "JetId", "F")
+            self.out.branch(prefix + "PuId", "F")
+            if self.isMC:
+                self.out.branch(prefix + "HadronFlavour", "F")
+                self.out.branch(prefix + "HiggsMatched", "O")
+                self.out.branch(prefix + "HiggsMatchedIndex", "I")
+                self.out.branch(prefix + "FatJetMatched", "O")
+                self.out.branch(prefix + "FatJetMatchedIndex", "I")
+        
+        for idx_a in ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]):
+            for idx_b in range(idx_a, 11):
+                prefix = 'jet%ijet%i'%(idx_a, idx_b)
+                self.out.branch("pt" + prefix , "F")
+                self.out.branch("eta" + prefix , "F")
+                self.out.branch("phi" + prefix , "F")
+                self.out.branch("mass" + prefix, "F")
+                self.out.branch("dr" + prefix, "F")
+
+        for idx in ([1, 2, 3, 4, 5, 6]):
+            prefix = 'bcand%i'%idx
+            self.out.branch(prefix + "Pt", "F")
+            self.out.branch(prefix + "Eta", "F")
+            self.out.branch(prefix + "Phi", "F")
+            self.out.branch(prefix + "DeepFlavB", "F")
+            # [AK4 PNet removed] No longer saving PNet scores for AK4 jets
+            #self.out.branch(prefix + "PNetB", "F")
+            #self.out.branch(prefix + "PNetBvsC", "F")
+            #self.out.branch(prefix + "PNetBCvsL", "F")
+            #self.out.branch(prefix + "PNetCat", "I")
+            self.out.branch(prefix + "JetId", "F")
+            self.out.branch(prefix + "PuId", "F")
+            self.out.branch(prefix + "Mass", "F")
+            self.out.branch(prefix + "RawFactor", "F")
+            self.out.branch(prefix + "MatchedGenPt", "F")
+            self.out.branch(prefix + "bRegCorr", "F")
+            self.out.branch(prefix + "bRegRes", "F")
+            self.out.branch(prefix + "cRegCorr", "F")
+            self.out.branch(prefix + "cRegRes", "F")
+
+            if self.isMC:
+                self.out.branch(prefix + "HadronFlavour", "F")
+                self.out.branch(prefix + "HiggsMatched", "O")
+                self.out.branch(prefix + "HiggsMatchedIndex", "I")
+
