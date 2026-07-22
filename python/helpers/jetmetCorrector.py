@@ -348,7 +348,7 @@ class JetMETCorrector(object):
 
         # correct MET
         if met is not None:
-            met_shift = sum([j._t1MetDelta for j in itertools.chain(jets, lowPtJets)])
+            met_shift = sum([j._t1MetDelta for j in itertools.chain(jets, lowPtJets)], np.zeros(2))
             # MET unclustered energy
             if isMC and self.met_unclustered:
                 delta = np.array([met.MetUnclustEnUpDeltaX, met.MetUnclustEnUpDeltaY])

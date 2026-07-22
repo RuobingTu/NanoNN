@@ -1,5 +1,4 @@
 import numpy as np
-import correctionlib
 import os
 
 class BTagWeightCalculator:
@@ -23,6 +22,7 @@ class BTagWeightCalculator:
         self.is_run3 = is_run3
 
         # Load CorrectionSet from JSON
+        import correctionlib
         if not os.path.exists(json_file):
             raise FileNotFoundError(f"JSON file not found: {json_file}")
         self.cset = correctionlib.CorrectionSet.from_file(json_file)
