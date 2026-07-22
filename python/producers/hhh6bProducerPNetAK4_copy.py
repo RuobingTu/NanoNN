@@ -168,6 +168,154 @@ class METObject(Object):
     def p4(self):
         return polarP4(self, eta=None, mass=None)
 
+
+# ---------------------------------------------------------------------------
+# v27 MET-angular / event-shape helpers.
+#
+# Everything here is a pure function of transverse kinematics, so the same code
+# serves the tau-pair channels (2tau0l / 1tau1l / 0tau2l) and the b-jet pair in
+# the lepton-vetoed 1tau0l channel.
+# ---------------------------------------------------------------------------
+
+#: Value written when a variable is geometrically undefined for the event
+#: (e.g. Dzeta with fewer than two visible legs). Deliberately NOT 0, which is a
+#: physically reachable value for Dzeta/mT_tot and would be indistinguishable.
+UNDEFINED = -999.0
+
+
+def _mt_sq(pt_a, phi_a, pt_b, phi_b):
+    """Squared transverse mass of two massless transverse vectors."""
+    return max(2.0 * pt_a * pt_b * (1.0 - math.cos(phi_a - phi_b)), 0.0)
+
+
+def transverse_mass(pt_a, phi_a, pt_b, phi_b):
+    """mT = sqrt(2 pT_a pT_b (1 - cos dphi)). Same convention as lep{i}Mt."""
+    return math.sqrt(_mt_sq(pt_a, phi_a, pt_b, phi_b))
+
+
+def mt_tot(pt1, phi1, pt2, phi2, met, metphi):
+    """Total transverse mass of a two-leg + MET system (standard H->tautau variable).
+
+    mT_tot = sqrt(mT^2(l1,MET) + mT^2(l2,MET) + mT^2(l1,l2))
+    """
+    return math.sqrt(_mt_sq(pt1, phi1, met, metphi)
+                     + _mt_sq(pt2, phi2, met, metphi)
+                     + _mt_sq(pt1, phi1, pt2, phi2))
+
+
+def d_zeta(pt1, phi1, pt2, phi2, met, metphi, alpha=0.85):
+    """Return (Dzeta, pzeta_vis, pzeta_miss) for two visible legs plus MET.
+
+    The zeta axis is the bisector of the two legs' transverse UNIT vectors --
+    using unit vectors (not momenta) is what makes the bisector independent of
+    the pT balance between the legs, and is the standard CDF/CMS definition.
+
+    Degenerate case: exactly back-to-back legs make the bisector ill-defined;
+    those events return UNDEFINED rather than an arbitrary axis.
+    """
+    u1x, u1y = math.cos(phi1), math.sin(phi1)
+    u2x, u2y = math.cos(phi2), math.sin(phi2)
+    zx, zy = u1x + u2x, u1y + u2y
+    norm = math.hypot(zx, zy)
+    if norm < 1e-6:
+        return UNDEFINED, UNDEFINED, UNDEFINED
+    zx, zy = zx / norm, zy / norm
+    pzeta_vis = (pt1 * u1x + pt2 * u2x) * zx + (pt1 * u1y + pt2 * u2y) * zy
+    pzeta_miss = met * math.cos(metphi) * zx + met * math.sin(metphi) * zy
+    return pzeta_miss - alpha * pzeta_vis, pzeta_vis, pzeta_miss
+
+
+def mt2_massless(p4_1, p4_2, met, metphi):
+    """MT2 of two visible 4-vectors with massless invisible particles.
+
+    Lester-Nachman bisection (arXiv:1411.4312v7), vendored in helpers/mt2_cc/.
+    Returns UNDEFINED if the solver reports an error (negative return value).
+
+    Endpoint reminder: MT2 is bounded by the parent mass ONLY when the event
+    really is two symmetric chains Y -> visible_i + invisible_i and the trial
+    invisible mass equals the true one. With m_chi = 0 that holds for
+    W -> l nu pairs (endpoint m_W), which is the ttbar-dilepton case. It does
+    NOT hold for a single lost-lepton neutrino, so mt2_bb in the lepton-vetoed
+    1tau0l channel is a bounded MET-angular discriminant, not an m_top endpoint.
+
+    IMPORTANT degeneracy (verified numerically against a brute-force 2-D scan):
+    with massless visibles AND m_chi = 0, MT2 is EXACTLY 0 whenever MET lies
+    inside the angular wedge spanned by the two legs. In that case
+    MET = a*p1hat + b*p2hat with a,b >= 0, so both legs can be handed collinear
+    invisible momenta and both mT vanish. Consequences:
+      * H->tautau signal has its neutrinos collinear with the visible legs, so
+        MET sits inside the wedge and mt2_ll piles up at exactly 0 -- expect a
+        large delta-function at zero, it is not a bug.
+      * All the separation therefore lives in the non-zero ttbar/W tail, and
+        mt2_ll is strongly correlated with Dzeta, which measures the same
+        "is MET inside the wedge" geometry continuously. Check that they are not
+        redundant before spending input slots on both.
+      * If a less degenerate variable is wanted, re-run with a non-zero trial
+        mass (m_chi ~ m_W) -- that is a one-line change here, but note the
+        endpoint interpretation changes with it.
+    """
+    val = ROOT.asymm_mt2_lester_bisect.get_mT2(
+        p4_1.M(), p4_1.Px(), p4_1.Py(),
+        p4_2.M(), p4_2.Px(), p4_2.Py(),
+        met * math.cos(metphi), met * math.sin(metphi),
+        0.0, 0.0)
+    return val if val >= 0 else UNDEFINED
+
+
+def event_shapes(p4list):
+    """Sphericity-tensor event shapes from a list of 4-vectors (lab frame).
+
+    Returns a dict with both tensor conventions:
+
+    Quadratic tensor  S^ab = sum p^a p^b / sum |p|^2  (pT-weighted, the classic
+    LEP definition). Eigenvalues l1>=l2>=l3 give
+        sphericity = 3/2 (l2+l3),  aplanarity = 3/2 l3,  planarity = l2 - l3.
+
+    Linear (linearised) tensor  L^ab = sum p^a p^b/|p| / sum |p|  is infrared
+    safe -- it is not dominated by the single hardest object, so it is the more
+    stable choice in busy QCD events. Its eigenvalues give the standard
+        C = 3 (l1 l2 + l2 l3 + l3 l1),  D = 27 l1 l2 l3,
+    plus a linearised sphericity 3/2 (l2+l3) for direct comparison.
+
+    Fewer than two objects leaves the tensor rank-deficient and the shapes
+    meaningless, so those events get UNDEFINED.
+    """
+    out = {'sphericity': UNDEFINED, 'aplanarity': UNDEFINED, 'planarity': UNDEFINED,
+           'sphericity_lin': UNDEFINED, 'shapeC': UNDEFINED, 'shapeD': UNDEFINED}
+    if len(p4list) < 2:
+        return out
+
+    quad = np.zeros((3, 3))
+    lin = np.zeros((3, 3))
+    norm_quad = 0.0
+    norm_lin = 0.0
+    for p4 in p4list:
+        p = np.array([p4.Px(), p4.Py(), p4.Pz()])
+        pmag = float(np.linalg.norm(p))
+        if pmag <= 0:
+            continue
+        outer = np.outer(p, p)
+        quad += outer
+        norm_quad += pmag * pmag
+        lin += outer / pmag
+        norm_lin += pmag
+    if norm_quad <= 0 or norm_lin <= 0:
+        return out
+
+    # Symmetric, positive semi-definite -> eigvalsh gives ascending real eigenvalues.
+    lq = np.linalg.eigvalsh(quad / norm_quad)[::-1]      # l1 >= l2 >= l3
+    ll = np.linalg.eigvalsh(lin / norm_lin)[::-1]
+    lq = np.clip(lq, 0.0, None)
+    ll = np.clip(ll, 0.0, None)
+
+    out['sphericity'] = 1.5 * (lq[1] + lq[2])
+    out['aplanarity'] = 1.5 * lq[2]
+    out['planarity'] = lq[1] - lq[2]
+    out['sphericity_lin'] = 1.5 * (ll[1] + ll[2])
+    out['shapeC'] = 3.0 * (ll[0] * ll[1] + ll[1] * ll[2] + ll[2] * ll[0])
+    out['shapeD'] = 27.0 * ll[0] * ll[1] * ll[2]
+    return out
+
 class triggerEfficiency():
     def __init__(self, year):
         self._year = year
@@ -285,6 +433,25 @@ class hhh6bProducerPNetAK4(Module):
         self.DeepFlavB_WP_M = {"2016": 0.2489, "2016APV": 0.2598, "2016preVFP": 0.2598, "2016postVFP": 0.2489, "2017": 0.3040, "2018": 0.2783, "2022": 0.3086, "2022EE": 0.3086, "2023": 0.3086, "2023BPix": 0.3086}[self.year]
         self.DeepFlavB_WP_T = {"2016": 0.6377, "2016APV": 0.6502, "2016preVFP": 0.6502, "2016postVFP": 0.6377, "2017": 0.7476, "2018": 0.7100, "2022": 0.7183, "2022EE": 0.7183, "2023": 0.7183, "2023BPix": 0.7183}[self.year]
         
+        # DeepTau2017v2p1 VSjet bitmask of the ANALYSIS ("tight"/signal) tau WP.
+        # v27: Loose (>=8). v25/v26 used Medium (>=16); the analysis settled on
+        # Loose on 2026-06-29, so the producer now matches it.
+        #
+        # This is not just a counting WP -- event.analysisTaus drives the AK4/AK8
+        # overlap cleaning, so it propagates into ht / nbtags / nsmalljets /
+        # jet{1..10} and every channel cut. Going Loose removes the mother jet of
+        # ~24% of events' leading tau instead of ~11%.
+        # KNOWN CONSEQUENCE for the fake-rate method: the tight region (>=8) now
+        # always has its tau's mother jet cleaned away while the anti-ID region
+        # ([2,8)) never does, so numerator and denominator differ by one jet -- and
+        # the FR is binned in nbtags/njets. The *_medclean diagnostic branches below
+        # let that shift be measured directly on v27 output without a re-skim.
+        self.TauVSjet_WP_analysis = 8   # Loose
+        self.TauVSjet_WP_medium = 16    # kept for the *_medclean diagnostics
+        #: correctionlib WP string matching TauVSjet_WP_analysis -- keep in sync,
+        #: it is what tauIDSF_weight is evaluated at.
+        self.TauVSjet_WP_analysis_name = {2: "VVLoose", 4: "VLoose", 8: "Loose",
+                                          16: "Medium", 32: "Tight"}[self.TauVSjet_WP_analysis]
         self.btag_calculator = None
 
         self.tau_corr = None  # Loaded in beginFile after isMC is known
@@ -575,7 +742,17 @@ class hhh6bProducerPNetAK4(Module):
             ROOT.gROOT.ProcessLine(".L " + macropath + fname+".cc")
           except RuntimeError:
             ROOT.gROOT.LoadMacro(macropath + fname+".cc" + " ++g")
-        self.kUndefinedDecayType, self.kTauToHadDecay,  self.kTauToElecDecay, self.kTauToMuDecay = 0, 1, 2, 3  
+        self.kUndefinedDecayType, self.kTauToHadDecay,  self.kTauToElecDecay, self.kTauToMuDecay = 0, 1, 2, 3
+
+        # MT2 ("stransverse mass") — Lester-Nachman bisection, arXiv:1411.4312v7.
+        # Header-only; vendored from the FourTop analysis into helpers/mt2_cc/.
+        # API: asymm_mt2_lester_bisect::get_mT2(mVis1,pxVis1,pyVis1,
+        #                                       mVis2,pxVis2,pyVis2,
+        #                                       pxMiss,pyMiss, mInvis1,mInvis2)
+        mt2path = os.path.expandvars(
+            '$CMSSW_BASE/src/PhysicsTools/NanoNN/python/helpers/mt2_cc/lester_mt2_bisect.h')
+        if not hasattr(ROOT, 'asymm_mt2_lester_bisect'):
+            ROOT.gInterpreter.Declare('#include "%s"' % mt2path)
 
     def beginJob(self):
         if self._needsJMECorr:
@@ -672,6 +849,22 @@ class hhh6bProducerPNetAK4(Module):
         self.out.branch("met", "F")
         self.out.branch("rho", "F")
         self.out.branch("metphi", "F")
+        # --- MET resolution / alternative MET (v27) ---------------------------
+        # met_significance = MET^T V^-1 MET with V the per-object resolution
+        # covariance matrix; chi2(2 dof) under the "true MET = 0" null hypothesis.
+        # Unlike raw MET it divides out the hadronic-activity-driven resolution,
+        # so it separates real neutrinos from mismeasured QCD at high HT.
+        # The cov elements are also FastMTT's inputs (already read at fillLepPairInfo),
+        # so storing them makes any future FastMTT variant re-derivable offline.
+        self.out.branch("met_significance", "F")
+        self.out.branch("met_covXX", "F")
+        self.out.branch("met_covXY", "F")
+        self.out.branch("met_covYY", "F")
+        self.out.branch("met_sumEt", "F")
+        # PuppiMET: FastMTT uses this internally while met/metphi above are PF
+        # Type-1. Store it so every MET-derived variable can be made consistent.
+        self.out.branch("puppimet", "F")
+        self.out.branch("puppimetphi", "F")
         #self.out.branch("npvs", "F")
         self.out.branch("ht", "F")
         self.out.branch("passmetfilters", "O")
@@ -1013,6 +1206,29 @@ class hhh6bProducerPNetAK4(Module):
         # used to anti-top-tag for the QCD-enriched fake-tau region. -1 = no candidate.
         self.out.branch("hadTopMass", "F")
         self.out.branch("hadWMass", "F")
+        # --- v27: MT2 of the two most b-like AK4 jets, massless invisibles -------
+        # Available in every channel including the lepton-vetoed 1tau0l, where the
+        # two-leg Dzeta/mT_tot/MT2 above do not exist. NOTE: this is NOT an m_top
+        # endpoint variable here -- see mt2_massless() -- it is a bounded
+        # MET-vs-b-jet angular discriminant. -999 if fewer than two jets.
+        self.out.branch("mt2_bb", "F")
+        # --- v27: event shapes from the sphericity tensor ------------------------
+        # Objects = cleaned AK4 jets + analysis taus + analysis leptons, lab frame.
+        # Both tensor conventions are stored (quadratic: sphericity/aplanarity/
+        # planarity; linearised, infrared safe: sphericity_lin/shapeC/shapeD) so the
+        # choice can be made at training time without a re-skim. -999 if <2 objects.
+        self.out.branch("sphericity", "F")
+        self.out.branch("aplanarity", "F")
+        self.out.branch("planarity", "F")
+        self.out.branch("sphericity_lin", "F")
+        self.out.branch("shapeC", "F")
+        self.out.branch("shapeD", "F")
+        # --- v27 diagnostics: ht/nbtags/nsmalljets as they WOULD have been with the
+        # v26 Medium-WP tau cleaning. Lets the size of the Loose-WP cleaning switch
+        # be measured on v27 output alone. Diagnostic only -- do not use for physics.
+        self.out.branch("ht_medclean", "F")
+        self.out.branch("nbtags_medclean", "I")
+        self.out.branch("nsmalljets_medclean", "I")
         self.out.branch("ntaus", "I")
         self.out.branch("nleps", "I")
         self.out.branch("nbtags", "I")
@@ -1179,11 +1395,11 @@ class hhh6bProducerPNetAK4(Module):
             self.out.branch(prefix + "_vsele_up", "F")
             self.out.branch(prefix + "_vsele_down", "F")
             # Loose-VSjet-WP variant (VSmu/VSe shared with the Medium set)
-            self.out.branch(prefix + "_loose", "F")
-            self.out.branch(prefix + "_loose_vsjet_up", "F")
-            self.out.branch(prefix + "_loose_vsjet_down", "F")
+            self.out.branch(prefix + "_medium", "F")
+            self.out.branch(prefix + "_medium_vsjet_up", "F")
+            self.out.branch(prefix + "_medium_vsjet_down", "F")
         self.out.branch("tauIDSF_weight", "F")
-        self.out.branch("tauIDSF_weight_loose", "F")
+        self.out.branch("tauIDSF_weight_medium", "F")
 
         self.out.branch("mll", "F")  # dilepton invariant mass (0tau2l channel)
 
@@ -1212,6 +1428,13 @@ class hhh6bProducerPNetAK4(Module):
             self.out.branch(prefix + "jetPartonFlavour", "I")  # mother jet partonFlavour (q/g handle); -1 if no jet / data
             self.out.branch(prefix + "jetDeepFlavB", "F")      # mother jet DeepFlavB (data-available b-ness of faking jet); -1 if no jet
             self.out.branch(prefix + "jetQGL", "F")            # mother jet quark-gluon likelihood (data-available q/g handle); -1 if no jet/undef
+            # Transverse mass against MET, same convention as lep{i}Mt:
+            #   mT = sqrt(2 pT_tau MET (1 - cos dphi))
+            # Jacobian endpoint at m_W for W->tau nu and tt->tau nu; signal taus from
+            # H->tautau are collinear with their neutrinos and sit at small mT.
+            # 0 for empty tau slots. This is the only tau-vs-MET angular variable
+            # available in the 1tau0l channel (Dzeta/mT_tot/FastMTT need two legs).
+            self.out.branch(prefix + "Mt", "F")
 
         # gen variables
         for idx in ([1, 2, 3]):
@@ -1275,6 +1498,27 @@ class hhh6bProducerPNetAK4(Module):
         self.out.branch("higgs3_phi_manu", "F")
         self.out.branch("deltaPhi_taupair_MET", "F")
         self.out.branch("deltaR_taupair", "F")
+
+        # ---- v27: MET angular projections for the two-visible-leg channels -------
+        # Filled only for kind_category in {0,1,3} (2tau0l / 1tau1l / 0tau2l), i.e.
+        # wherever a genuine two-leg system exists. 1tau0l (kc==2) has a single
+        # visible leg, so all of these are geometrically undefined -> sentinel -999.
+        #
+        # Dzeta = pzeta_miss - 0.85*pzeta_vis, projected on the BISECTOR of the two
+        # legs' transverse UNIT vectors. H/Z->tautau put MET inside the opening angle
+        # (neutrinos collinear with the visible decay products) -> large positive;
+        # ttbar neutrinos come from W decay, uncorrelated with the legs -> often
+        # negative. pzeta_vis/pzeta_miss stored separately so the 0.85 coefficient
+        # can be re-tuned offline without a re-skim.
+        self.out.branch("dzeta", "F")
+        self.out.branch("pzeta_vis", "F")
+        self.out.branch("pzeta_miss", "F")
+        # mT_tot = sqrt(mT^2(l1,MET) + mT^2(l2,MET) + mT^2(l1,l2)) -- the standard
+        # H->tautau total transverse mass.
+        self.out.branch("mt_tot", "F")
+        # MT2 of the two visible legs with massless invisibles (Lester bisection).
+        # Endpoint at m_W for ttbar dilepton / WW (each chain is W -> visible + nu).
+        self.out.branch("mt2_ll", "F")
 
         # ---- Option 92: write the tt-enriched lepton-tagged hadronic "1tau1l" control
         # region to a SEPARATE output file (postfix _1tau1l_hadronic) in the SAME pass.
@@ -1635,8 +1879,10 @@ class hhh6bProducerPNetAK4(Module):
         self.nTaus = int(len(event.looseTaus))
         self.nLeps = int(len(event.looseLeptons))
         self.nrawTaus = event.nTau
-        # Analysis WP counts: tau Medium VSjet(>=16) [v25; was Loose >=8], electron WP90+MiniIso<0.1, muon mediumId+MiniIso<0.2
-        self.nTaus_analysis = sum(1 for t in event.looseTaus if t.idDeepTau2017v2p1VSjet >= 16)
+        # Analysis WP counts: tau Loose VSjet(>=8) [v27; v25/v26 used Medium >=16],
+        # electron WP90+MiniIso<0.1, muon mediumId+MiniIso<0.2
+        self.nTaus_analysis = sum(1 for t in event.looseTaus
+                                  if t.idDeepTau2017v2p1VSjet >= self.TauVSjet_WP_analysis)
         self.nLeps_analysis = sum(1 for l in event.looseLeptons if l.passAnalysisWP)
         # FR (Fakeable) counts: inclusive-of-Tight pool
         # tau FR pool = looseTaus (VVLoose VSjet) = self.nTaus; lepton FR pool = passFakeableWP
@@ -1646,8 +1892,13 @@ class hhh6bProducerPNetAK4(Module):
         self.nMediumLeptons = sum(1 for l in event.looseLeptons if getattr(l, 'passAnalysisId', False))
 
         # Analysis WP collections for jet cleaning (veto jets overlapping with analysis-WP objects)
-        event.analysisTaus = [t for t in event.looseTaus if t.idDeepTau2017v2p1VSjet >= 16]  # v25: Medium (was Loose >=8)
+        event.analysisTaus = [t for t in event.looseTaus
+                              if t.idDeepTau2017v2p1VSjet >= self.TauVSjet_WP_analysis]  # v27: Loose
         event.analysisLeptons = [l for l in event.looseLeptons if l.passAnalysisWP]
+        # v26-style Medium-WP tau list, kept ONLY to build the *_medclean diagnostic
+        # jet quantities so the size of the v26->v27 cleaning change is measurable.
+        event.mediumTaus = [t for t in event.looseTaus
+                            if t.idDeepTau2017v2p1VSjet >= self.TauVSjet_WP_medium]
 
     def GetGenMatch_ofTau(self, event, looseTau):
         if not self.isMC:
@@ -1978,6 +2229,19 @@ class hhh6bProducerPNetAK4(Module):
         event.ak4jets_PTcut25 = [j for j in event.ak4jets if j.pt > 25]
         event.fatjets = event.fatjets_mediumclean
 
+        # --- v27 diagnostic: the SAME jet collection but cleaned against the OLD
+        # v26 Medium-WP tau list. Only ht/nbtags/nsmalljets are recomputed (not the
+        # full jet block), which is enough to quantify how much the Loose-WP
+        # cleaning switch moved the FR binning variables -- directly on v27 output,
+        # with no second production. Not intended for physics use.
+        ak4jets_medclean = [j for j in event.ak4jetsUnclean
+                            if closest(j, event.analysisLeptons)[1] > 0.4
+                            and closest(j, event.mediumTaus)[1] > 0.5]
+        self.ht_medclean = sum(j.pt for j in ak4jets_medclean)
+        self.nsmalljets_medclean = int(sum(1 for j in ak4jets_medclean if j.pt > 25))
+        self.nbtags_medclean = int(sum(1 for j in ak4jets_medclean
+                                       if j.btagDeepFlavB > self.DeepFlavB_WP_M))
+
         
 
         self.nFatJets = int(len(event.fatjets))
@@ -2226,15 +2490,21 @@ class hhh6bProducerPNetAK4(Module):
           - genFlav=2,4 (muon faking tau): VSmu SF is the real correction, VSjet/VSe ~1.0
           - genFlav=1,3 (electron faking tau): VSe SF is the real correction, VSjet/VSmu ~1.0
           - genFlav=0 (jet fake): all return 1.0 (handled by data-driven fake rate)
-        Uses Medium WP for VSjet (v25; was Loose), VLoose for VSmu, VVLoose for VSe.
+
+        VSjet is evaluated at the ANALYSIS WP (v27: Loose; v25/v26 used Medium),
+        VLoose for VSmu, VVLoose for VSe. The nominal default attributes therefore
+        always match whatever WP selected the tau -- a Medium SF on a Loose-selected
+        tau is a silent ~few-% bias, so the two must not be allowed to drift apart.
+        A Medium-WP variant is kept alongside (nominal + VSjet up/down only) purely
+        for the Medium-vs-Loose comparison.
         """
         tau.tauIdSF = 1.0
         tau.tauIdSF_vsjet_up = 1.0; tau.tauIdSF_vsjet_down = 1.0
         tau.tauIdSF_vsmu_up = 1.0;  tau.tauIdSF_vsmu_down = 1.0
         tau.tauIdSF_vsele_up = 1.0; tau.tauIdSF_vsele_down = 1.0
-        # Loose-VSjet-WP variant (VSmu/VSe shared with the Medium products)
-        tau.tauIdSF_loose = 1.0
-        tau.tauIdSF_loose_vsjet_up = 1.0; tau.tauIdSF_loose_vsjet_down = 1.0
+        # Medium-VSjet-WP variant (VSmu/VSe shared with the analysis-WP products)
+        tau.tauIdSF_medium = 1.0
+        tau.tauIdSF_medium_vsjet_up = 1.0; tau.tauIdSF_medium_vsjet_down = 1.0
 
         if not self.isMC or self.tau_id_vsjet is None:
             return
@@ -2249,14 +2519,15 @@ class hhh6bProducerPNetAK4(Module):
             # VSjet: only evaluate for genuine taus (genFlav=5) with valid DMs;
             # for lepton fakes (genFlav=1-4) VSjet returns ~1.0
             sf_vsjet = 1.0; sf_vsjet_up = 1.0; sf_vsjet_down = 1.0
-            sf_vsjet_loose = 1.0; sf_vsjet_loose_up = 1.0; sf_vsjet_loose_down = 1.0
+            sf_vsjet_med = 1.0; sf_vsjet_med_up = 1.0; sf_vsjet_med_down = 1.0
             if genFlav == 5 and dm in (0, 1, 10, 11):
-                sf_vsjet      = self.tau_id_vsjet.evaluate(pt, dm, genFlav, "Medium", "VVLoose", "nom", "dm")
-                sf_vsjet_up   = self.tau_id_vsjet.evaluate(pt, dm, genFlav, "Medium", "VVLoose", "up", "dm")
-                sf_vsjet_down = self.tau_id_vsjet.evaluate(pt, dm, genFlav, "Medium", "VVLoose", "down", "dm")
-                sf_vsjet_loose      = self.tau_id_vsjet.evaluate(pt, dm, genFlav, "Loose", "VVLoose", "nom", "dm")
-                sf_vsjet_loose_up   = self.tau_id_vsjet.evaluate(pt, dm, genFlav, "Loose", "VVLoose", "up", "dm")
-                sf_vsjet_loose_down = self.tau_id_vsjet.evaluate(pt, dm, genFlav, "Loose", "VVLoose", "down", "dm")
+                wp = self.TauVSjet_WP_analysis_name   # v27: "Loose"
+                sf_vsjet      = self.tau_id_vsjet.evaluate(pt, dm, genFlav, wp, "VVLoose", "nom", "dm")
+                sf_vsjet_up   = self.tau_id_vsjet.evaluate(pt, dm, genFlav, wp, "VVLoose", "up", "dm")
+                sf_vsjet_down = self.tau_id_vsjet.evaluate(pt, dm, genFlav, wp, "VVLoose", "down", "dm")
+                sf_vsjet_med      = self.tau_id_vsjet.evaluate(pt, dm, genFlav, "Medium", "VVLoose", "nom", "dm")
+                sf_vsjet_med_up   = self.tau_id_vsjet.evaluate(pt, dm, genFlav, "Medium", "VVLoose", "up", "dm")
+                sf_vsjet_med_down = self.tau_id_vsjet.evaluate(pt, dm, genFlav, "Medium", "VVLoose", "down", "dm")
             # VSmu: (abseta, genPartFlav, wp, syst) — real correction for genFlav=2,4
             sf_vsmu      = self.tau_id_vsmu.evaluate(eta, genFlav, "VLoose", "nom")
             sf_vsmu_up   = self.tau_id_vsmu.evaluate(eta, genFlav, "VLoose", "up")
@@ -2273,10 +2544,10 @@ class hhh6bProducerPNetAK4(Module):
             tau.tauIdSF_vsmu_down  = sf_vsjet * sf_vsmu_down * sf_vse
             tau.tauIdSF_vsele_up   = sf_vsjet * sf_vsmu * sf_vse_up
             tau.tauIdSF_vsele_down = sf_vsjet * sf_vsmu * sf_vse_down
-            # Loose-VSjet-WP variant (VSmu/VSe identical to the Medium set)
-            tau.tauIdSF_loose           = sf_vsjet_loose      * sf_vsmu * sf_vse
-            tau.tauIdSF_loose_vsjet_up  = sf_vsjet_loose_up   * sf_vsmu * sf_vse
-            tau.tauIdSF_loose_vsjet_down = sf_vsjet_loose_down * sf_vsmu * sf_vse
+            # Medium-VSjet-WP variant (VSmu/VSe identical to the analysis-WP set)
+            tau.tauIdSF_medium            = sf_vsjet_med      * sf_vsmu * sf_vse
+            tau.tauIdSF_medium_vsjet_up   = sf_vsjet_med_up   * sf_vsmu * sf_vse
+            tau.tauIdSF_medium_vsjet_down = sf_vsjet_med_down * sf_vsmu * sf_vse
         except Exception as e:
             logger.warning("Tau IdSF failed (pt=%.1f, eta=%.2f, dm=%d, genFlav=%d): %s",
                            tau.pt, tau.eta, dm, genFlav, e)
@@ -2297,9 +2568,9 @@ class hhh6bProducerPNetAK4(Module):
                 self.out.fillBranch(prefix + "_vsmu_down", tau.tauIdSF_vsmu_down)
                 self.out.fillBranch(prefix + "_vsele_up",  tau.tauIdSF_vsele_up)
                 self.out.fillBranch(prefix + "_vsele_down", tau.tauIdSF_vsele_down)
-                self.out.fillBranch(prefix + "_loose",            tau.tauIdSF_loose)
-                self.out.fillBranch(prefix + "_loose_vsjet_up",   tau.tauIdSF_loose_vsjet_up)
-                self.out.fillBranch(prefix + "_loose_vsjet_down", tau.tauIdSF_loose_vsjet_down)
+                self.out.fillBranch(prefix + "_medium",            tau.tauIdSF_medium)
+                self.out.fillBranch(prefix + "_medium_vsjet_up",   tau.tauIdSF_medium_vsjet_up)
+                self.out.fillBranch(prefix + "_medium_vsjet_down", tau.tauIdSF_medium_vsjet_down)
             else:
                 self.out.fillBranch(prefix,                1.0)
                 self.out.fillBranch(prefix + "_vsjet_up",  1.0)
@@ -2308,24 +2579,34 @@ class hhh6bProducerPNetAK4(Module):
                 self.out.fillBranch(prefix + "_vsmu_down", 1.0)
                 self.out.fillBranch(prefix + "_vsele_up",  1.0)
                 self.out.fillBranch(prefix + "_vsele_down", 1.0)
-                self.out.fillBranch(prefix + "_loose",            1.0)
-                self.out.fillBranch(prefix + "_loose_vsjet_up",   1.0)
-                self.out.fillBranch(prefix + "_loose_vsjet_down", 1.0)
+                self.out.fillBranch(prefix + "_medium",            1.0)
+                self.out.fillBranch(prefix + "_medium_vsjet_up",   1.0)
+                self.out.fillBranch(prefix + "_medium_vsjet_down", 1.0)
 
-        # Combined weight: tau1 × tau2 (missing taus default to 1.0)
+        # Combined weight: tau1 × tau2 (missing taus default to 1.0).
+        # tauIDSF_weight ALWAYS tracks the analysis WP (v27: Loose), so the
+        # framework's weight chain stays WP-consistent without any change there.
         sf1 = taus[0].tauIdSF if len(taus) >= 1 else 1.0
         sf2 = taus[1].tauIdSF if len(taus) >= 2 else 1.0
         self.out.fillBranch("tauIDSF_weight", sf1 * sf2)
-        # Loose-WP combined weight (parallel to the Medium one above)
-        sf1l = taus[0].tauIdSF_loose if len(taus) >= 1 else 1.0
-        sf2l = taus[1].tauIdSF_loose if len(taus) >= 2 else 1.0
-        self.out.fillBranch("tauIDSF_weight_loose", sf1l * sf2l)
+        # Medium-WP combined weight, for the Medium-vs-Loose comparison only.
+        sf1m = taus[0].tauIdSF_medium if len(taus) >= 1 else 1.0
+        sf2m = taus[1].tauIdSF_medium if len(taus) >= 2 else 1.0
+        self.out.fillBranch("tauIDSF_weight_medium", sf1m * sf2m)
 
     def fillBaseEventInfo(self, event, fatjets, hadGenHs):
         self.out.fillBranch("ht", event.ht)
         self.out.fillBranch("rho", event.fixedGridRhoFastjetAll)
         self.out.fillBranch("met", event.met.pt)
         self.out.fillBranch("metphi", event.met.phi)
+        # MET resolution / alternative MET (v27). All are plain NanoAODv9 branches.
+        self.out.fillBranch("met_significance", event.MET_significance)
+        self.out.fillBranch("met_covXX", event.MET_covXX)
+        self.out.fillBranch("met_covXY", event.MET_covXY)
+        self.out.fillBranch("met_covYY", event.MET_covYY)
+        self.out.fillBranch("met_sumEt", event.MET_sumEt)
+        self.out.fillBranch("puppimet", event.PuppiMET_pt)
+        self.out.fillBranch("puppimetphi", event.PuppiMET_phi)
         self.out.fillBranch("weight", event.gweight)
         #self.out.fillBranch("npvs", event.PV.npvs)
 
@@ -2906,6 +3187,34 @@ class hhh6bProducerPNetAK4(Module):
                                 bestHadTop = mt
         self.out.fillBranch("hadTopMass", bestHadTop)
         self.out.fillBranch("hadWMass", bestHadW)
+
+        # v27 Medium-cleaning diagnostics (see selectLeptons)
+        self.out.fillBranch("ht_medclean", getattr(self, 'ht_medclean', 0.0))
+        self.out.fillBranch("nbtags_medclean", getattr(self, 'nbtags_medclean', 0))
+        self.out.fillBranch("nsmalljets_medclean", getattr(self, 'nsmalljets_medclean', 0))
+
+        # --- v27: MT2(b,b) ------------------------------------------------------
+        # `jets` is sorted by btagDeepFlavB (descending), so jets[0:2] are the two
+        # most b-like AK4 jets. Massless invisibles, PF Type-1 MET (same MET as
+        # met/metphi and every other mT-like variable in the tree).
+        if len(jets_4vec) >= 2:
+            mt2bb = mt2_massless(jets_4vec[0], jets_4vec[1], event.met.pt, event.met.phi)
+        else:
+            mt2bb = UNDEFINED
+        self.out.fillBranch("mt2_bb", mt2bb)
+
+        # --- v27: event shapes --------------------------------------------------
+        # Reconstructed visible objects: cleaned AK4 jets + analysis taus +
+        # analysis leptons. MET is deliberately excluded -- it has no z component,
+        # so adding it would bias the tensor towards the transverse plane.
+        shape_p4 = list(jets_4vec)
+        shape_p4 += [polarP4(t) for t in getattr(event, 'analysisTaus', [])]
+        shape_p4 += [polarP4(l) for l in getattr(event, 'analysisLeptons', [])]
+        shapes = event_shapes(shape_p4)
+        for key in ('sphericity', 'aplanarity', 'planarity',
+                    'sphericity_lin', 'shapeC', 'shapeD'):
+            self.out.fillBranch(key, shapes[key])
+
         njets_fillJetInfo_tmp = len(jets)
         for idx_a in ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]):
             for idx_b in range(idx_a, 11):
@@ -3247,6 +3556,15 @@ class hhh6bProducerPNetAK4(Module):
             fillBranch(prefix + "jetPartonFlavour", lep.jetPartonFlavour, -1)
             fillBranch(prefix + "jetDeepFlavB", lep.jetDeepFlavB, -1.0)
             fillBranch(prefix + "jetQGL", lep.jetQGL, -1.0)
+            # MT(tau, MET), identical convention to lep{i}Mt above (PF Type-1 MET,
+            # i.e. the same 'met'/'metphi' written to the tree). Empty slots -> 0.
+            if bool(lep):
+                dphi_tau_met = lep.phi - event.met.phi
+                mt_tau = math.sqrt(max(2.0 * lep.pt * event.met.pt
+                                       * (1.0 - math.cos(dphi_tau_met)), 0.0))
+            else:
+                mt_tau = 0.0
+            self.out.fillBranch(prefix + "Mt", mt_tau)
             lep.IfHiggsTau = 0
             if self.isMC and not isinstance(lep, _NullObject) and self.genTaulistFromHiggs:
                 if any(deltaR(lep, item) < 0.4 for item in self.genTaulistFromHiggs):
@@ -3294,7 +3612,13 @@ class hhh6bProducerPNetAK4(Module):
             FMTToutput = FMTT.getBestP4()
             FastMTTmass = FMTToutput.M()
             tau_pair = t1 + t2
-            deltaPhi_taupair_MET = tau_pair.Phi() - MET_phi
+            # v27 BUGFIX: wrap into [-pi, pi]. Up to v26 this was a bare
+            # subtraction spanning [-2pi, 2pi], i.e. an angle with an artificial
+            # discontinuity at +-pi -- and it is fed to SPANet as an input
+            # (INPUTS/TauPair/deltaPhi_taupair_MET). v27 values therefore differ
+            # from v26 for the ~half of events where the bare difference left the
+            # principal range; deltaPhi() is the same helper used elsewhere.
+            deltaPhi_taupair_MET = deltaPhi(tau_pair.Phi(), MET_phi)
             deltaR_taupair = deltaR(t1.Eta(), t1.Phi(), t2.Eta(), t2.Phi())
             self.out.fillBranch("higgs3_mass_manu", FastMTTmass)
             self.out.fillBranch("higgs3TauMatchStatus", HiggsTauMatchStatus)
@@ -3303,6 +3627,20 @@ class hhh6bProducerPNetAK4(Module):
             self.out.fillBranch("higgs3_phi_manu", tau_pair.Phi())
             self.out.fillBranch("deltaPhi_taupair_MET", deltaPhi_taupair_MET)
             self.out.fillBranch("deltaR_taupair", deltaR_taupair)
+
+            # --- v27 MET angular projections -----------------------------------
+            # Use the PF Type-1 MET that is written to met/metphi (and used by
+            # tau{i}Mt / lep{i}Mt), NOT the PuppiMET that FastMTT consumes above,
+            # so that every mT-like variable in the tree shares one MET definition.
+            met_pt, met_phi_pf = event.met.pt, event.met.phi
+            dz, pz_vis, pz_miss = d_zeta(t1.Pt(), t1.Phi(), t2.Pt(), t2.Phi(),
+                                         met_pt, met_phi_pf)
+            self.out.fillBranch("dzeta", dz)
+            self.out.fillBranch("pzeta_vis", pz_vis)
+            self.out.fillBranch("pzeta_miss", pz_miss)
+            self.out.fillBranch("mt_tot", mt_tot(t1.Pt(), t1.Phi(), t2.Pt(), t2.Phi(),
+                                                 met_pt, met_phi_pf))
+            self.out.fillBranch("mt2_ll", mt2_massless(t1, t2, met_pt, met_phi_pf))
         else:
             self.out.fillBranch("higgs3_mass_manu", 0)
             self.out.fillBranch("higgs3TauMatchStatus", 0)
@@ -3311,6 +3649,13 @@ class hhh6bProducerPNetAK4(Module):
             self.out.fillBranch("higgs3_phi_manu", 0)
             self.out.fillBranch("deltaPhi_taupair_MET", - MET_phi)
             self.out.fillBranch("deltaR_taupair", 0)
+            # 1tau0l (kc==2): a single visible leg, so the two-leg projections are
+            # geometrically undefined -- sentinel, not 0 (0 is reachable for Dzeta).
+            self.out.fillBranch("dzeta", UNDEFINED)
+            self.out.fillBranch("pzeta_vis", UNDEFINED)
+            self.out.fillBranch("pzeta_miss", UNDEFINED)
+            self.out.fillBranch("mt_tot", UNDEFINED)
+            self.out.fillBranch("mt2_ll", UNDEFINED)
 
 
     def higgsPairingAlgorithm(self, event, jets, fatjets):
@@ -3715,6 +4060,12 @@ class hhh6bProducerPNetAK4(Module):
                 pass_JetHT = True
 
         # SingleTau: HLT fires + nTaus>=1 + leading tau pT > threshold + VSjet >= 16 (Medium)
+        #
+        # NOTE (v27): the >=16 here is DELIBERATELY still Medium and must NOT be
+        # switched to self.TauVSjet_WP_analysis. These are offline emulations of the
+        # ONLINE tau ID in the SingleTau/DoubleTau HLT paths, so the WP is set by the
+        # trigger, not by the analysis selection. Loosening it would change trigger
+        # acceptance and invalidate the measured trigger SF.
         pass_SingleTau = False
         if self._hlt_fired(event, self._trigger_defs['SingleTau'].get(year_str, [])):
             if self.nTaus >= 1:
@@ -4357,8 +4708,12 @@ class hhh6bProducerPNetAK4(Module):
         self.fillLeptonIDSF(analysisLeptons)
 
         # Calculate and fill tau ID SF weights (1.0 for data/fakes, handled inside)
-        # Only apply SF to taus passing analysis VSjet WP (v25: >=16 = Medium; was >=8 = Loose), not the loose pool (>=2 = VVLoose)
-        analysisTaus = [t for t in event.looseTaus if t.idDeepTau2017v2p1VSjet >= 16]
+        # Only apply SF to taus passing the analysis VSjet WP (v27: >=8 = Loose;
+        # v25/v26 used >=16 = Medium), not the loose FR pool (>=2 = VVLoose).
+        # Same WP as event.analysisTaus and as the SF evaluation itself -- the tau
+        # SET and the SF WP must move together or the weight is silently biased.
+        analysisTaus = [t for t in event.looseTaus
+                        if t.idDeepTau2017v2p1VSjet >= self.TauVSjet_WP_analysis]
         self.fillTauIdSF(analysisTaus)
 
         # Calculate and fill b-tagging weights
