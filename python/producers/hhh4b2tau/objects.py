@@ -1,8 +1,8 @@
 """Reco object selection: tau energy scale, lepton/tau pools and WP flags.
 
-Moved verbatim out of hhh6bProducerPNetAK4_copy.py by
+Moved verbatim out of producer.py by
 refactor_stageA.py -- method bodies are byte-identical slices of the
-pre-refactor source. Mixed into hhh6bProducerPNetAK4, so `self` still
+pre-refactor source. Mixed into HHH4b2tauProducer, so `self` still
 refers to the producer instance exactly as before.
 """
 import os

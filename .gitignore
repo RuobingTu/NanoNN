@@ -2,6 +2,3 @@
 *__init__.py
 *__pycache__/
 *.pyc
-# transient refactor-comparison copy of the pre-refactor producer (see tag v26)
-python/producers/hhh6bProducerPNetAK4_prerefactor.py
-python/producers/_backup_prerefactor/

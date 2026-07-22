@@ -1,6 +1,6 @@
 """Shared module-level objects for the HHH->4b2tau producer.
 
-Moved verbatim out of hhh6bProducerPNetAK4_copy.py so the mixin modules and the
+Moved verbatim out of producer.py so the mixin modules and the
 orchestrator can both see them without importing each other.
 """
 import os

@@ -154,7 +154,7 @@ configLogger('nano', loglevel=logging.INFO)
 #: (e.g. Dzeta with fewer than two visible legs). Deliberately NOT 0, which is a
 #: physically reachable value for Dzeta/mT_tot and would be indistinguishable.
         
-class hhh6bProducerPNetAK4(
+class HHH4b2tauProducer(
         GenHistoryMixin, ObjectSelectionMixin, CorrectionsMixin, HiggsPairingMixin, TriggerMixin, EventFillMixin, JetFillMixin, LeptonFillMixin,
         Module):
     
@@ -1374,11 +1374,11 @@ class hhh6bProducerPNetAK4(
         return True
 
 # define modules using the syntax 'name = lambda : constructor' to avoid having them loaded when not needed
-def hhh6bProducerPNetAK4FromConfig():
+def hhh4b2tauProducerFromConfig():
     import sys
     #sys.path.remove('/usr/lib64/python2.7/site-packages')
     import yaml
     with open('hhh6b_cfg.json') as f:
         cfg = yaml.safe_load(f)
         year = cfg['year']
-        return hhh6bProducerPNetAK4(**cfg)
+        return HHH4b2tauProducer(**cfg)
