@@ -228,7 +228,9 @@ class CorrectionsMixin(object):
         #event.fatjetsUnclean = [fj for fj in event._xbbFatJets if fj.pt > 200 and abs(fj.eta) < 2.4 and (fj.jetId & 2)]
         event.fatjetsUnclean = [fj for fj in event._xbbFatJets if abs(fj.eta) < 2.4]
         #event.fatjets_mediumclean = [ fj for fj in event.fatjetsUnclean if closest(fj,event.cleaningMuons)[1]>1.0 and closest(fj, event.cleaningElectrons)[1]>1.0 and closest(fj, event.looseTaus)[1]>1.0]
-        event.fatjets_mediumclean = [ fj for fj in event.fatjetsUnclean if closest(fj,event.analysisLeptons)[1]>1.0 and closest(fj, event.analysisTaus)[1]>1.0]
+        # v28: clean against channelTaus (leading <=2 loose taus, any WP) instead of
+        # analysisTaus, so anti-ID events lose their mother jet exactly like tight ones.
+        event.fatjets_mediumclean = [ fj for fj in event.fatjetsUnclean if closest(fj,event.analysisLeptons)[1]>1.0 and closest(fj, event.channelTaus)[1]>1.0]
 
         #event.ak4jets = [j for j in event._allJets if j.pt > 20 and abs(j.eta) < 2.5 and (j.jetId & 2)]
 
@@ -238,7 +240,7 @@ class CorrectionsMixin(object):
         event.ak4jetsUnclean = [j for j in event._allJets if j.pt > 20 and abs(j.eta) < 2.5 and j.jetId >= 2 and ( (j.pt < 50 and j.puId>=puid) or (j.pt >= 50) )]
         if "2016" not in self.year:
             event.ak4jetsUnclean = [j for j in event.ak4jetsUnclean if abs(j.eta) < 2.4]
-        event.ak4jets = [ j for j in event.ak4jetsUnclean if closest(j,event.analysisLeptons)[1]>0.4 and closest(j, event.analysisTaus)[1]>0.5]
+        event.ak4jets = [ j for j in event.ak4jetsUnclean if closest(j,event.analysisLeptons)[1]>0.4 and closest(j, event.channelTaus)[1]>0.5]
         event.ak4jets_PTcut25 = [j for j in event.ak4jets if j.pt > 25]
         event.fatjets = event.fatjets_mediumclean
 

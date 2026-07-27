@@ -544,11 +544,14 @@ class JetFillMixin(object):
         self.out.fillBranch("mt2_bb", mt2bb)
 
         # --- v27: event shapes --------------------------------------------------
-        # Reconstructed visible objects: cleaned AK4 jets + analysis taus +
-        # analysis leptons. MET is deliberately excluded -- it has no z component,
-        # so adding it would bias the tensor towards the transverse plane.
+        # Reconstructed visible objects: cleaned AK4 jets + CHANNEL taus (v28:
+        # same list the jet cleaning uses -- an anti-ID tau's momentum must stay
+        # in the sum once its mother jet is vetoed, else the shapes lose that
+        # momentum entirely for anti-ID events) + analysis leptons. MET is
+        # deliberately excluded -- it has no z component, so adding it would bias
+        # the tensor towards the transverse plane.
         shape_p4 = list(jets_4vec)
-        shape_p4 += [polarP4(t) for t in getattr(event, 'analysisTaus', [])]
+        shape_p4 += [polarP4(t) for t in getattr(event, 'channelTaus', [])]
         shape_p4 += [polarP4(l) for l in getattr(event, 'analysisLeptons', [])]
         shapes = event_shapes(shape_p4)
         for key in ('sphericity', 'aplanarity', 'planarity',

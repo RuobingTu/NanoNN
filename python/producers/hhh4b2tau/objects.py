@@ -245,3 +245,12 @@ class ObjectSelectionMixin(object):
         # jet quantities so the size of the v26->v27 cleaning change is measurable.
         event.mediumTaus = [t for t in event.looseTaus
                             if t.idDeepTau2017v2p1VSjet >= self.TauVSjet_WP_medium]
+        # v28: CHANNEL taus = the (<=2) leading FR-pool taus by rawDeepTau VSjet,
+        # regardless of the analysis WP. Jet cleaning and the event-shape object
+        # list use THESE, so the event representation depends only on the channel
+        # topology, never on the tau-ID decision: anti-ID (FR application-region)
+        # events get exactly the same mother-jet veto as tight ones, removing the
+        # tight-vs-anti-ID jet-bookkeeping asymmetry that the offline as-if-tight
+        # FR correction had to undo (and the jet4DeepFlavB MR-cut bias with it).
+        # SR is unchanged: channel taus there pass the analysis WP anyway.
+        event.channelTaus = event.looseTaus[:2]
